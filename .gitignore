@@ -1,0 +1,17 @@
+# PlatformIO
+.pio/
+
+# VSCode
+.vscode/
+
+# ESP-IDF managed components (auto-downloaded by PlatformIO)
+managed_components/
+
+# ESP-IDF generated config
+sdkconfig.esp32-s3-devkitm-1
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
