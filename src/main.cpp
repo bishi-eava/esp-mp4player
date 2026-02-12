@@ -3,7 +3,6 @@
 #include "freertos/queue.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
-
 #include "board_config.h"
 #include "lcd_config.h"
 #include "mp4_player.h"
@@ -138,8 +137,8 @@ extern "C" void app_main(void)
     ctx.display = &display;
     ctx.video_queue = xQueueCreate(4, sizeof(frame_msg_t));
 
-    // video_task first (higher priority, waits on queue)
-    // demux_task second (lower priority, feeds the queue)
+    // video_task on Core 0 (display SPI3 ISR is on Core 0)
+    // demux_task on Core 1 (SD SPI2 I/O separated from display)
     xTaskCreatePinnedToCore(video_task, "video", 48 * 1024, &ctx, 5, nullptr, 0);
-    xTaskCreatePinnedToCore(demux_task, "demux",  8 * 1024, &ctx, 4, nullptr, 0);
+    xTaskCreatePinnedToCore(demux_task, "demux", 32 * 1024, &ctx, 4, nullptr, 1);
 }

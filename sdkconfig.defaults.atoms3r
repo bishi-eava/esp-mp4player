@@ -4,7 +4,7 @@
 # --- Target ---
 CONFIG_IDF_TARGET="esp32s3"
 
-# --- PSRAM (Octal SPI, matched to working reference: access_sdcard) ---
+# --- PSRAM (Octal SPI — ESP32-S3-PICO-1-N8R8 internal PSRAM requires Octal mode) ---
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_TYPE_ESPPSRAM64=y

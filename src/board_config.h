@@ -39,20 +39,28 @@
 // ============================================================
 
 // Display (SPI3_HOST to avoid conflict with SD on SPI2_HOST)
+// Pin mapping differs from AtomS3 (non-R): SCLK=15, DC=42, CS=14, RST=48
 #define BOARD_DISPLAY_WIDTH    128
 #define BOARD_DISPLAY_HEIGHT   128
 #define BOARD_DISPLAY_ROTATION 0
 #define BOARD_LCD_SPI_HOST     SPI3_HOST
-#define BOARD_LCD_SCK          17
+#define BOARD_LCD_SCK          15
 #define BOARD_LCD_MOSI         21
-#define BOARD_LCD_DC           33
-#define BOARD_LCD_CS           15
-#define BOARD_LCD_RST          34
-#define BOARD_LCD_BL           16
-#define BOARD_LCD_OFFSET_X     2
-#define BOARD_LCD_OFFSET_Y     1
-#define BOARD_LCD_INVERT       true
+#define BOARD_LCD_DC           42
+#define BOARD_LCD_CS           14
+#define BOARD_LCD_RST          48
+#define BOARD_LCD_BL           16   // PWM backlight (also needs I2C LED driver init)
+#define BOARD_LCD_OFFSET_X     0
+#define BOARD_LCD_OFFSET_Y     32   // GC9107 memory is 128x160, display is 128x128, starts at row 32
+#define BOARD_LCD_INVERT       false
 #define BOARD_LCD_SPI_FREQ     40000000
+
+// I2C LED driver for backlight (address 0x30, init required before PWM works)
+#define BOARD_BL_I2C_PORT      I2C_NUM_1
+#define BOARD_BL_I2C_SDA       45
+#define BOARD_BL_I2C_SCL       0
+#define BOARD_BL_I2C_ADDR      0x30
+#define BOARD_BL_I2C_FREQ      400000
 
 // SD Card: SPI mode via ATOMIC TF Card Reader (SPI2_HOST)
 #define BOARD_SD_MODE_SPI

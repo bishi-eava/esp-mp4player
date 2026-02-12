@@ -12,11 +12,13 @@
 
 ### M5Stack Atom S3R + ATOMIC TF Card Reader
 - **MCU:** ESP32-S3-PICO-1-N8R8 (board: m5stack-atoms3)
-- **Flash:** 8MB, **PSRAM:** 8MB Octal SPI
+- **Flash:** 8MB, **PSRAM:** 8MB Octal SPI (専用内部SPI0/SPI1、GPIO消費なし)
 - **Display:** GC9107 128x128 IPS, rotation=0
-  - SPI Pins: DC=33, CS=15, SCK=17, MOSI=21, RST=34 (SPI3_HOST)
-  - Backlight: GPIO16 (PWM), offset_x=2, offset_y=1, invert=true
-- **SD Card:** SPI mode (MOSI=6, MISO=8, SCK=7, CS=4, SPI2_HOST)
+  - SPI Pins: DC=42, CS=14, SCK=15, MOSI=21, RST=48 (SPI3_HOST), spi_3wire=true
+  - Backlight: I2C LEDドライバ (addr=0x30, SDA=45, SCL=0) + GPIO16 PWM
+  - offset_x=0, offset_y=32, invert=false
+  - **注意:** AtomS3(非R)とはSPIピンが異なる (SCK,DC,CS,RSTが全て別)
+- **SD Card:** SPI mode via ATOMIC TF Card Reader (MOSI=6, MISO=8, SCK=7, CS=4, SPI2_HOST)
 
 ## Architecture (FreeRTOS タスク構成)
 ```
