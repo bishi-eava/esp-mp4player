@@ -3,10 +3,15 @@
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 
-// SpotPear ESP32-S3 LCD 1.3inch (ST7789 240x240) configuration
+#include "board_config.h"
+
 class LGFX : public lgfx::LGFX_Device {
     lgfx::Bus_SPI       _bus_instance;
+#if defined(BOARD_SPOTPEAR)
     lgfx::Panel_ST7789  _panel_instance;
+#elif defined(BOARD_ATOMS3R)
+    lgfx::Panel_GC9107  _panel_instance;
+#endif
     lgfx::Light_PWM     _light_instance;
 
 public:
@@ -14,39 +19,39 @@ public:
         // SPI bus
         {
             auto cfg = _bus_instance.config();
-            cfg.spi_host   = SPI2_HOST;
+            cfg.spi_host   = BOARD_LCD_SPI_HOST;
             cfg.spi_mode   = 0;
-            cfg.freq_write = 40000000;
+            cfg.freq_write = BOARD_LCD_SPI_FREQ;
             cfg.freq_read  = 16000000;
             cfg.dma_channel = SPI_DMA_CH_AUTO;
-            cfg.pin_sclk = 40;
-            cfg.pin_mosi = 41;
+            cfg.pin_sclk = BOARD_LCD_SCK;
+            cfg.pin_mosi = BOARD_LCD_MOSI;
             cfg.pin_miso = -1;
-            cfg.pin_dc   = 38;
+            cfg.pin_dc   = BOARD_LCD_DC;
             _bus_instance.config(cfg);
             _panel_instance.setBus(&_bus_instance);
         }
 
-        // ST7789 panel
+        // Panel
         {
             auto cfg = _panel_instance.config();
-            cfg.pin_cs   = 39;
-            cfg.pin_rst  = 42;
+            cfg.pin_cs   = BOARD_LCD_CS;
+            cfg.pin_rst  = BOARD_LCD_RST;
             cfg.pin_busy = -1;
-            cfg.panel_width  = 240;
-            cfg.panel_height = 240;
-            cfg.offset_x     = 0;
-            cfg.offset_y     = 0;
+            cfg.panel_width  = BOARD_DISPLAY_WIDTH;
+            cfg.panel_height = BOARD_DISPLAY_HEIGHT;
+            cfg.offset_x     = BOARD_LCD_OFFSET_X;
+            cfg.offset_y     = BOARD_LCD_OFFSET_Y;
             cfg.offset_rotation = 0;
-            cfg.invert   = true;   // IPS panel
-            cfg.rgb_order = false;  // BGR order (ST7789 default)
+            cfg.invert   = BOARD_LCD_INVERT;
+            cfg.rgb_order = false;
             _panel_instance.config(cfg);
         }
 
-        // Backlight (GPIO20, PWM)
+        // Backlight (PWM)
         {
             auto cfg = _light_instance.config();
-            cfg.pin_bl = 20;
+            cfg.pin_bl = BOARD_LCD_BL;
             cfg.invert = false;
             cfg.freq   = 44100;
             cfg.pwm_channel = 7;

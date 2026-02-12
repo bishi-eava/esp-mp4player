@@ -1,52 +1,87 @@
 # ESP32-S3 MP4 Movie Player Project
 
-## Board
-- **Name:** SpotPear ESP32-S3 LCD 1.3inch
-- **Wiki:** https://spotpear.com/wiki/ESP32-S3-1.3-inch-LCD-ST7789-240x240-Display-Screen.html
+## Supported Boards
+
+### SpotPear ESP32-S3 LCD 1.3inch
 - **MCU:** ESP32-S3 (esp32-s3-devkitm-1)
-- **Framework:** ESP-IDF (PlatformIO, espressif32 @ ^6.5.0)
-- **PSRAM:** あり（Octal SPI, 80MHz）
+- **Flash:** 16MB, **PSRAM:** 8MB Octal SPI
+- **Display:** ST7789 240x240 IPS, rotation=0
+  - SPI Pins: DC=38, CS=39, SCK=40, MOSI=41, RST=42 (SPI2_HOST)
+  - Backlight: GPIO20 (PWM), offset_x=0, offset_y=0, invert=true
+- **SD Card:** SDMMC 1-bit mode (D0=16, D3=17, CMD=18, CLK=21)
 
-## Display
-- **Controller:** ST7789 (IPS)
-- **Resolution:** 240x240
-- **SPI Pins:** DC=38, CS=39, SCK=40, MOSI=41, RST=42 (SPI2_HOST)
-- **Backlight:** GPIO20 (PWM, HIGH=ON)
-- **SPI Frequency:** 40MHz
-- **Library:** LovyanGFX（設定は `src/lcd_config.h`）
-- **Note:** offset_y=80, invert=true (IPS panel)
+### M5Stack Atom S3R + ATOMIC TF Card Reader
+- **MCU:** ESP32-S3-PICO-1-N8R8 (board: m5stack-atoms3)
+- **Flash:** 8MB, **PSRAM:** 8MB Octal SPI
+- **Display:** GC9107 128x128 IPS, rotation=0
+  - SPI Pins: DC=33, CS=15, SCK=17, MOSI=21, RST=34 (SPI3_HOST)
+  - Backlight: GPIO16 (PWM), offset_x=2, offset_y=1, invert=true
+- **SD Card:** SPI mode (MOSI=6, MISO=8, SCK=7, CS=4, SPI2_HOST)
 
-## SD Card (SDMMC 1-bit mode)
-- D0=16, D3(CS)=17, CMD=18, CLK=21
-- D3をHIGHに設定してからSDMMC初期化
-- ESP-IDFの `sdmmc_host` + `esp_vfs_fat` API を使用
-- マウントポイント: `/sdcard`
-
-## IMU Sensor (QMI8658)
-- I2C: SDA=47, SCL=48
-- INT1=46, INT2=45
-
-## Architecture (MP4 Player Pipeline)
+## Architecture (FreeRTOS タスク構成)
 ```
-SDカード → minimp4 (demux) → AVCC→Annex B変換 → esp-h264 (decode) → I420→RGB565変換 → LovyanGFX (display)
+app_main (Core 0):
+  1. init_sdcard()  ← SD SPI を先に初期化（SPIバス競合回避）
+  2. init_display() ← Display SPI を後から初期化
+  3. FreeRTOS queue 作成 → demux_task + video_task 起動
+
+demux_task (Core 0, 8KB, priority 4):
+  SD読み込み → minimp4 demux → AVCC→AnnexB → frame_msg_t を queue へ送信
+
+video_task (Core 0, 48KB, priority 5):
+  queue から受信 → esp-h264 decode → I420→RGB565 → LovyanGFX display
+
+[将来] audio_task (Core 1): I2S 外部DAC へ音声出力
+```
+
+### 初期化順序（重要）
+SD カード初期化を **必ずディスプレイより先に** 行うこと。
+Atom S3R では Display(SPI3_HOST) → SD(SPI2_HOST) の順で初期化すると `TG1WDT_SYS_RST` でリブートする。
+
+## Key Files
+- `src/board_config.h` — ボード別GPIO・ディスプレイ・SDカード設定（条件コンパイル）
+- `src/lcd_config.h` — LovyanGFX設定（board_config.hのマクロを使用）
+- `src/main.cpp` — SD→Display初期化、queue作成、demux/videoタスク起動
+- `src/mp4_player.h` — frame_msg_t, player_ctx_t 型定義、タスクエントリーポイント宣言
+- `src/mp4_player.cpp` — demux_task（SD I/O + MP4 demux）、video_task（H.264 decode + display）
+- `src/yuv2rgb.h` — I420→RGB565変換
+- `platformio.ini` — マルチ環境設定（spotpear/atoms3r）
+- `sdkconfig.defaults.spotpear` — SpotPear用sdkconfig（Octal PSRAM, 16MB Flash）
+- `sdkconfig.defaults.atoms3r` — Atom S3R用sdkconfig（Octal PSRAM, 8MB Flash）
+
+## Build
+```bash
+pio run -e spotpear              # SpotPearビルド
+pio run -e atoms3r               # Atom S3Rビルド
+pio run -e spotpear -t upload    # SpotPearへアップロード
+pio run -e atoms3r -t upload     # Atom S3Rへアップロード
+pio device monitor               # シリアルモニタ (115200bps)
+```
+
+### クリーンビルド（sdkconfig変更時に必要）
+```bash
+rm -f sdkconfig.spotpear && rm -rf .pio/build/spotpear && pio run -e spotpear
+rm -f sdkconfig.atoms3r && rm -rf .pio/build/atoms3r && pio run -e atoms3r
+```
+**重要:** `sdkconfig.defaults.*` を変更した場合、生成された `sdkconfig.<env>` を削除しないと反映されない
+
+## Test Video Preparation
+H.264 Baseline Profile 必須（SWデコーダ制限）。ファイル名: `/sdcard/video.mp4`
+
+### SpotPear (240x240)
+```bash
+ffmpeg -i input.mp4 -vf "scale=240:240,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
+```
+
+### Atom S3R (128x128)
+```bash
+ffmpeg -i input.mp4 -vf "scale=128:128,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
 ```
 
 ## Key Libraries
-- **LovyanGFX:** ディスプレイドライバ（DMA SPI, ESP-IDF対応）
+- **LovyanGFX:** ディスプレイドライバ（DMA SPI, ESP-IDF対応, ST7789/GC9107）
 - **minimp4:** MP4コンテナパーサー（シングルヘッダ, CC0ライセンス）
 - **esp-h264-component:** H.264ソフトウェアデコーダ（Espressif公式, SIMD最適化）
-
-## Build
-- `pio run` でビルド
-- `pio run -t upload` でアップロード
-- `pio device monitor` でシリアルモニタ (115200bps)
-
-## Test Video Preparation
-```bash
-ffmpeg -i input.mp4 -vf "scale=240:240,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p /sdcard/video.mp4
-```
-- Baseline Profile 必須（SWデコーダ制限）
-- ファイル名: `/sdcard/video.mp4`
 
 ## Reference
 - サンプルコード: `../Reference/ESP32-S3-LCD-1.3-Demo-New/Arduino/`
