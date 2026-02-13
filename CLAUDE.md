@@ -43,6 +43,12 @@ Core 1                                Core 0
 [将来] audio_task (Core 1): I2S 外部DAC へ音声出力
 ```
 
+### スケーリング (Nearest-Neighbor)
+- LCDより大きい動画はアスペクト比を維持して縮小表示（レターボックス/ピラーボックス）
+- YUV→RGB565変換時にインラインでスケーリング（追加バッファ不要）
+- デコード上限: 960x540 (Full HD半分、全ボード共通、`BOARD_MAX_DECODE_WIDTH/HEIGHT`)
+- LCD以下の動画はスケーリングなし（fast path、既存動作と同じ）
+
 ### ダブルバッファ同期
 - `decode_ready` セマフォ: decode完了 → display開始
 - `display_done` セマフォ: display完了 → decode次フレーム可
@@ -58,7 +64,7 @@ Atom S3R では Display(SPI3_HOST) → SD(SPI2_HOST) の順で初期化すると
 - `src/main.cpp` — SD→Display初期化、nal_queue+セマフォ作成、demux/decode/displayタスク起動
 - `src/mp4_player.h` — frame_msg_t, player_ctx_t 型定義（ダブルバッファ・セマフォ含む）、タスク宣言
 - `src/mp4_player.cpp` — demux_task（SD I/O + MP4 demux）、decode_task（H.264 decode + YUV→RGB565）、display_task（pushImage DMA転送）
-- `src/yuv2rgb.h` — I420→RGB565変換
+- `src/yuv2rgb.h` — I420→RGB565変換（スケーリング付き `i420_to_rgb565_scaled()` 含む）
 - `platformio.ini` — マルチ環境設定（spotpear/atoms3r）
 - `sdkconfig.defaults.spotpear` — SpotPear用sdkconfig（Octal PSRAM, 16MB Flash）
 - `sdkconfig.defaults.atoms3r` — Atom S3R用sdkconfig（Octal PSRAM, 8MB Flash）
@@ -81,14 +87,16 @@ rm -f sdkconfig.atoms3r && rm -rf .pio/build/atoms3r && pio run -e atoms3r
 
 ## Test Video Preparation
 H.264 Baseline Profile 必須（SWデコーダ制限）。ファイル名: `/sdcard/video.mp4`
+任意解像度の動画をアスペクト比維持でLCDに縮小表示可能（デコード上限 960x540 以内）。
 
-### SpotPear (240x240)
 ```bash
+# 960x540（アスペクト比維持、高さ自動+偶数丸め）
+ffmpeg -i input.mp4 -vf "scale=960:-2,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
+
+# LCD同サイズ（スケーリングなし）— SpotPear
 ffmpeg -i input.mp4 -vf "scale=240:240,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
-```
 
-### Atom S3R (128x128)
-```bash
+# LCD同サイズ（スケーリングなし）— Atom S3R
 ffmpeg -i input.mp4 -vf "scale=128:128,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
 ```
 

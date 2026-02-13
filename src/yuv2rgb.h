@@ -50,3 +50,44 @@ static inline void i420_to_rgb565(const uint8_t *i420_buf, uint16_t *rgb565, int
     const uint8_t *v_plane = u_plane + (stride_w / 2) * (stride_h / 2);
     yuv2rgb565(y_plane, u_plane, v_plane, rgb565, width, height, stride_w, stride_h);
 }
+
+// Convert I420 to RGB565 with nearest-neighbor scaling (no extra buffer needed)
+// src_w/src_h: original decoder output dimensions
+// dst_w/dst_h: scaled output dimensions (must be <= src_w/src_h)
+static inline void i420_to_rgb565_scaled(const uint8_t *i420_buf, uint16_t *rgb565,
+                                          int src_w, int src_h, int dst_w, int dst_h)
+{
+    int stride_w = (src_w + 15) & ~15;
+    int stride_h = (src_h + 15) & ~15;
+
+    const uint8_t *y_plane = i420_buf;
+    const uint8_t *u_plane = i420_buf + stride_w * stride_h;
+    const uint8_t *v_plane = u_plane + (stride_w / 2) * (stride_h / 2);
+
+    int half_stride = stride_w / 2;
+
+    for (int j = 0; j < dst_h; j++) {
+        int src_y = j * src_h / dst_h;
+        const uint8_t *y_row = y_plane + src_y * stride_w;
+        const uint8_t *u_row = u_plane + (src_y / 2) * half_stride;
+        const uint8_t *v_row = v_plane + (src_y / 2) * half_stride;
+
+        for (int i = 0; i < dst_w; i++) {
+            int src_x = i * src_w / dst_w;
+
+            int y = y_row[src_x];
+            int u = u_row[src_x / 2] - 128;
+            int v = v_row[src_x / 2] - 128;
+
+            int r = y + ((v * 359) >> 8);
+            int g = y - ((u * 88 + v * 183) >> 8);
+            int b = y + ((u * 454) >> 8);
+
+            if (r < 0) r = 0; else if (r > 255) r = 255;
+            if (g < 0) g = 0; else if (g > 255) g = 255;
+            if (b < 0) b = 0; else if (b > 255) b = 255;
+
+            rgb565[j * dst_w + i] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+        }
+    }
+}

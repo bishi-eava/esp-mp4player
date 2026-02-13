@@ -23,8 +23,10 @@ typedef struct {
     QueueHandle_t  nal_queue;        // demux → decode
 
     // demux_task が設定 (MP4メタデータから)
-    int            video_w;
+    int            video_w;          // 元の動画解像度
     int            video_h;
+    int            scaled_w;         // スケーリング後の表示幅
+    int            scaled_h;         // スケーリング後の表示高さ
 
     // decode ↔ display ダブルバッファ同期
     SemaphoreHandle_t decode_ready;  // decode完了 → display開始

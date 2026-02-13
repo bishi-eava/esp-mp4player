@@ -152,8 +152,19 @@ void demux_task(void *arg)
         // Set video dimensions in shared context (decode_task reads these)
         int vw = tr->SampleDescription.video.width;
         int vh = tr->SampleDescription.video.height;
-        if (vw <= 0 || vw > BOARD_DISPLAY_WIDTH) vw = BOARD_DISPLAY_WIDTH;
-        if (vh <= 0 || vh > BOARD_DISPLAY_HEIGHT) vh = BOARD_DISPLAY_HEIGHT;
+        if (vw <= 0 || vh <= 0) {
+            ESP_LOGE(TAG, "Invalid video dimensions: %dx%d", vw, vh);
+            MP4D_close(&mp4);
+            fclose(f);
+            goto send_eos;
+        }
+        if (vw > BOARD_MAX_DECODE_WIDTH || vh > BOARD_MAX_DECODE_HEIGHT) {
+            ESP_LOGE(TAG, "Video %dx%d exceeds max decode resolution %dx%d",
+                     vw, vh, BOARD_MAX_DECODE_WIDTH, BOARD_MAX_DECODE_HEIGHT);
+            MP4D_close(&mp4);
+            fclose(f);
+            goto send_eos;
+        }
         ctx->video_w = vw;
         ctx->video_h = vh;
         ESP_LOGI(TAG, "Video dimensions: %dx%d", vw, vh);
@@ -276,14 +287,40 @@ void decode_task(void *arg)
         int video_h = ctx->video_h;
         if (video_w <= 0) video_w = BOARD_DISPLAY_WIDTH;
         if (video_h <= 0) video_h = BOARD_DISPLAY_HEIGHT;
-        ctx->display_x = (BOARD_DISPLAY_WIDTH - video_w) / 2;
-        ctx->display_y = (BOARD_DISPLAY_HEIGHT - video_h) / 2;
 
-        ESP_LOGI(TAG, "Video: %dx%d, display offset: (%d,%d)",
-                 video_w, video_h, ctx->display_x, ctx->display_y);
+        // Calculate aspect-ratio-preserving scale (integer math, downscale only)
+        int scaled_w, scaled_h;
+        bool needs_scaling = (video_w > BOARD_DISPLAY_WIDTH || video_h > BOARD_DISPLAY_HEIGHT);
+        if (needs_scaling) {
+            // Cross-multiply to compare ratios without float:
+            // LCD_W/video_w vs LCD_H/video_h  →  LCD_W*video_h vs LCD_H*video_w
+            if (BOARD_DISPLAY_WIDTH * video_h <= BOARD_DISPLAY_HEIGHT * video_w) {
+                // Width-constrained
+                scaled_w = BOARD_DISPLAY_WIDTH;
+                scaled_h = video_h * BOARD_DISPLAY_WIDTH / video_w;
+            } else {
+                // Height-constrained
+                scaled_h = BOARD_DISPLAY_HEIGHT;
+                scaled_w = video_w * BOARD_DISPLAY_HEIGHT / video_h;
+            }
+            // Ensure even dimensions for YUV subsampling
+            scaled_w &= ~1;
+            scaled_h &= ~1;
+        } else {
+            scaled_w = video_w;
+            scaled_h = video_h;
+        }
 
-        // Allocate RGB565 double buffers in PSRAM
-        size_t buf_size = video_w * video_h * sizeof(uint16_t);
+        ctx->scaled_w = scaled_w;
+        ctx->scaled_h = scaled_h;
+        ctx->display_x = (BOARD_DISPLAY_WIDTH - scaled_w) / 2;
+        ctx->display_y = (BOARD_DISPLAY_HEIGHT - scaled_h) / 2;
+
+        ESP_LOGI(TAG, "Video: %dx%d -> scaled: %dx%d, offset: (%d,%d)",
+                 video_w, video_h, scaled_w, scaled_h, ctx->display_x, ctx->display_y);
+
+        // Allocate RGB565 double buffers in PSRAM (scaled size)
+        size_t buf_size = scaled_w * scaled_h * sizeof(uint16_t);
         ctx->rgb_buf[0] = (uint16_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
         ctx->rgb_buf[1] = (uint16_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
         if (!ctx->rgb_buf[0] || !ctx->rgb_buf[1]) {
@@ -366,7 +403,12 @@ void decode_task(void *arg)
                     xSemaphoreTake(ctx->display_done, portMAX_DELAY);
 
                     // Convert YUV→RGB565 into write buffer
-                    i420_to_rgb565(out_frame.outbuf, ctx->rgb_buf[write_idx], video_w, video_h);
+                    if (needs_scaling) {
+                        i420_to_rgb565_scaled(out_frame.outbuf, ctx->rgb_buf[write_idx],
+                                              video_w, video_h, scaled_w, scaled_h);
+                    } else {
+                        i420_to_rgb565(out_frame.outbuf, ctx->rgb_buf[write_idx], video_w, video_h);
+                    }
 
                     // Signal display_task with the buffer index
                     ctx->active_buf = write_idx;
@@ -459,7 +501,7 @@ void display_task(void *arg)
         // Push the active buffer to LCD via SPI DMA
         int buf_idx = ctx->active_buf;
         display->pushImage(ctx->display_x, ctx->display_y,
-                           ctx->video_w, ctx->video_h,
+                           ctx->scaled_w, ctx->scaled_h,
                            ctx->rgb_buf[buf_idx]);
 
         // Signal decode_task that this buffer is free

@@ -43,7 +43,7 @@ https://youtube.com/shorts/kdLJf5c8VBU
 ## アーキテクチャ
 
 ```
-SDカード → minimp4 (demux) → AVCC→Annex B変換 → esp-h264 (decode) → I420→RGB565変換 → LovyanGFX (display)
+SDカード → minimp4 (demux) → AVCC→Annex B変換 → esp-h264 (decode) → I420→RGB565変換 (スケーリング付き) → LovyanGFX (display)
 ```
 
 ### FreeRTOS タスク構成
@@ -72,6 +72,10 @@ Core 1                                Core 0
 - **ダブルバッファ同期:** decode_task がフレーム N+1 をデコード中に display_task がフレーム N を DMA 転送
   - `decode_ready` セマフォ: decode完了 → display開始
   - `display_done` セマフォ: display完了 → decode次フレーム可
+- **スケーリング:** LCDより大きい動画はアスペクト比を維持してnearest-neighborで縮小表示（レターボックス/ピラーボックス）
+  - デコード上限: 960x540 (Full HD半分)
+  - YUV→RGB565変換時にインラインでスケーリング（追加バッファ不要）
+  - LCD以下の動画はスケーリングなし（fast path）
 
 ## 使用ライブラリ
 
@@ -107,18 +111,27 @@ ffmpegで再生用のMP4ファイルを変換し、SDカードのルートに `v
 
 H.264 Baseline Profile が**必須**です（ソフトウェアデコーダの制限）。
 
-### SpotPear (240x240)
+任意解像度の動画をアスペクト比を維持したままLCDに縮小表示できます（デコード上限: 960x540）。
+
+### 推奨（960x540、アスペクト比維持）
 
 ```bash
 ffmpeg -i input.mp4 \
-  -vf "scale=240:240,fps=15" \
+  -vf "scale=960:-2,fps=15" \
   -c:v libx264 -profile:v baseline -level 3.0 \
   -pix_fmt yuv420p video.mp4
 ```
 
-### Atom S3R (128x128)
+### LCD同サイズ（スケーリングなし）
 
 ```bash
+# SpotPear (240x240)
+ffmpeg -i input.mp4 \
+  -vf "scale=240:240,fps=15" \
+  -c:v libx264 -profile:v baseline -level 3.0 \
+  -pix_fmt yuv420p video.mp4
+
+# Atom S3R (128x128)
 ffmpeg -i input.mp4 \
   -vf "scale=128:128,fps=15" \
   -c:v libx264 -profile:v baseline -level 3.0 \
@@ -127,6 +140,7 @@ ffmpeg -i input.mp4 \
 
 | パラメータ | 値 | 説明 |
 |---|---|---|
+| 最大解像度 | 960x540 | デコード上限 (Full HD半分) |
 | フレームレート | 15fps | デコード性能に合わせた推奨値 |
 | コーデック | libx264 | H.264エンコーダ |
 | プロファイル | Baseline | **必須** (SWデコーダの制限) |

@@ -73,3 +73,7 @@
 #else
 #error "No board defined! Use -DBOARD_SPOTPEAR or -DBOARD_ATOMS3R"
 #endif
+
+// Max decode resolution (half of Full HD, common to all boards)
+#define BOARD_MAX_DECODE_WIDTH   960
+#define BOARD_MAX_DECODE_HEIGHT  540
