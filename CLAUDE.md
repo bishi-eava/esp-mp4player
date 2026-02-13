@@ -118,20 +118,20 @@ rm -f sdkconfig.atoms3r_spk && rm -rf .pio/build/atoms3r_spk && pio run -e atoms
 
 ## Test Video Preparation
 H.264 Baseline Profile 必須（SWデコーダ制限）。ファイル名: `/sdcard/video.mp4`
-任意解像度の動画をアスペクト比維持でLCDに縮小表示可能（デコード上限 960x540 以内）。
+LCDより大きい動画はアスペクト比維持で自動縮小表示（最大対応 960x540）。高解像度はコマ落ちするため **320x240 推奨**。
 
 ```bash
-# 960x540（アスペクト比維持、高さ自動+偶数丸め）
-ffmpeg -i input.mp4 -vf "scale=960:-2,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
+# 320x240 推奨（アスペクト比維持、高さ自動+偶数丸め）
+ffmpeg -i input.mp4 -vf "scale=320:-2,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
+
+# 320x240 + AAC音声 — Atom S3R + SPK Base
+ffmpeg -i input.mp4 -vf "scale=320:-2,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p -c:a aac -b:a 128k -ar 44100 -ac 1 video.mp4
 
 # LCD同サイズ（スケーリングなし）— SpotPear
 ffmpeg -i input.mp4 -vf "scale=240:240,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
 
 # LCD同サイズ（スケーリングなし）— Atom S3R
 ffmpeg -i input.mp4 -vf "scale=128:128,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p video.mp4
-
-# 128x128 + AAC音声 — Atom S3R + SPK Base
-ffmpeg -i input.mp4 -vf "scale=128:128,fps=15" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p -c:a aac -b:a 128k -ar 44100 -ac 1 video.mp4
 ```
 
 ## Key Libraries
