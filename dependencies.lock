@@ -1,4 +1,14 @@
 dependencies:
+  espressif/esp_audio_codec:
+    component_hash: af4663830bc73eca58febcc34a976d003465e78ed57458aa00a14b231e392ca1
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.4.1
   espressif/esp_h264:
     component_hash: e0b0212f2bdf1fc289a7370e6e7e69cd19883ae52661c746e9023a7cc7f22255
     dependencies:
@@ -25,9 +35,10 @@ dependencies:
       type: git
     version: 6f6e9a052fc719ecb2b42640b0207215050d2560
 direct_dependencies:
+- espressif/esp_audio_codec
 - espressif/esp_h264
 - idf
 - lovyanGFX
-manifest_hash: dd0dd69d4994fe989ac6aa7fbff5266d21a19065c9c3dfa8f78c69c19ef4942f
+manifest_hash: ca06248090aa5e1842e28f52a3c8d806e889ee387307658fc7bc0e592fd44a0d
 target: esp32s3
 version: 2.0.0

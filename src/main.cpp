@@ -110,6 +110,9 @@ static void init_display(void)
 
 extern "C" void app_main(void)
 {
+    // Wait for serial monitor connection
+    vTaskDelay(pdMS_TO_TICKS(5000));
+
     ESP_LOGI(TAG, "ESP32-S3 MP4 Movie Player starting...");
 
     // Phase 1: SD card first (SPI bus must be initialized before display to avoid conflict)
@@ -140,10 +143,19 @@ extern "C" void app_main(void)
     ctx.decode_ready = xSemaphoreCreateBinary();
     ctx.display_done = xSemaphoreCreateBinary();
 
+#ifdef BOARD_HAS_AUDIO
+    ctx.audio_queue = xQueueCreate(8, sizeof(audio_msg_t));
+#endif
+
     // decode_task on Core 1 (H.264 decode is CPU-heavy)
     // display_task on Core 0 (SPI DMA ISR is on Core 0)
     // demux_task on Core 1 (SD I/O, mostly waiting, shares Core 1 with decode)
     xTaskCreatePinnedToCore(decode_task,  "decode",  48 * 1024, &ctx, 5, nullptr, 1);
     xTaskCreatePinnedToCore(display_task, "display",  4 * 1024, &ctx, 6, nullptr, 0);
     xTaskCreatePinnedToCore(demux_task,   "demux",   32 * 1024, &ctx, 4, nullptr, 1);
+
+#ifdef BOARD_HAS_AUDIO
+    // audio_task on Core 0 (I2S DMA ISR on Core 0, higher priority than display)
+    xTaskCreatePinnedToCore(audio_task, "audio", 20 * 1024, &ctx, 7, nullptr, 0);
+#endif
 }
