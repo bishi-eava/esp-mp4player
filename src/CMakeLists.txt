@@ -9,4 +9,5 @@ idf_component_register(
         fatfs
         vfs
         esp_timer
+        esp_audio_codec
 )

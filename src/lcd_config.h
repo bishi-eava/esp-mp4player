@@ -5,7 +5,7 @@
 
 #include "board_config.h"
 
-#if defined(BOARD_ATOMS3R)
+#if defined(BOARD_ATOMS3R) || defined(BOARD_ATOMS3R_SPK)
 // I2C LED driver backlight for Atom S3R (device at 0x30)
 // Must init I2C LED driver before brightness control works.
 // Based on M5GFX Light_M5StackAtomS3R implementation.
@@ -31,7 +31,7 @@ class LGFX : public lgfx::LGFX_Device {
 #if defined(BOARD_SPOTPEAR)
     lgfx::Panel_ST7789  _panel_instance;
     lgfx::Light_PWM     _light_instance;
-#elif defined(BOARD_ATOMS3R)
+#elif defined(BOARD_ATOMS3R) || defined(BOARD_ATOMS3R_SPK)
     lgfx::Panel_GC9107  _panel_instance;
     Light_AtomS3R       _light_instance;
 #endif
@@ -45,7 +45,7 @@ public:
             cfg.spi_mode   = 0;
             cfg.freq_write = BOARD_LCD_SPI_FREQ;
             cfg.freq_read  = 16000000;
-#if defined(BOARD_ATOMS3R)
+#if defined(BOARD_ATOMS3R) || defined(BOARD_ATOMS3R_SPK)
             cfg.spi_3wire  = true;   // GC9107 uses 3-wire SPI (bidirectional MOSI)
 #endif
             cfg.dma_channel = SPI_DMA_CH_AUTO;

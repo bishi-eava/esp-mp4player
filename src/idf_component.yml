@@ -3,5 +3,7 @@ dependencies:
     version: ">=5.0.0"
   espressif/esp_h264:
     version: "*"
+  espressif/esp_audio_codec:
+    version: "^2.4.0"
   lovyanGFX:
     git: https://github.com/lovyan03/LovyanGFX.git

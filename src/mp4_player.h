@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "board_config.h"
 #include "lcd_config.h"
 
 // demux_task → decode_task へ送る NAL データ
@@ -15,6 +16,16 @@ typedef struct {
     bool     is_sps_pps; // SPS/PPS パラメータセット
     bool     eos;        // ストリーム終了マーカー
 } frame_msg_t;
+
+#ifdef BOARD_HAS_AUDIO
+// demux_task → audio_task へ送る AAC フレームデータ
+typedef struct {
+    uint8_t *data;       // AAC frame data (PSRAM確保, 受信側が解放)
+    int      size;       // AAC frame サイズ
+    int64_t  pts_us;     // プレゼンテーションタイムスタンプ (microseconds)
+    bool     eos;        // ストリーム終了マーカー
+} audio_msg_t;
+#endif
 
 // タスク間で共有するコンテキスト
 typedef struct {
@@ -37,10 +48,21 @@ typedef struct {
     int            display_y;       // 表示オフセットY
     volatile bool  pipeline_eos;    // EOS フラグ (decode→display)
 
-    // [将来] QueueHandle_t audio_queue;
+#ifdef BOARD_HAS_AUDIO
+    // Audio pipeline (demux → audio_task)
+    QueueHandle_t  audio_queue;
+    unsigned       audio_sample_rate;
+    unsigned       audio_channels;
+    uint8_t       *audio_dsi;       // AAC AudioSpecificConfig (コピー)
+    unsigned       audio_dsi_bytes;
+    volatile bool  audio_eos;
+#endif
 } player_ctx_t;
 
 // タスクエントリーポイント
 void demux_task(void *arg);
 void decode_task(void *arg);
 void display_task(void *arg);
+#ifdef BOARD_HAS_AUDIO
+void audio_task(void *arg);
+#endif

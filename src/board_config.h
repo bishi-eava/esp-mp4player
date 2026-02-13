@@ -70,8 +70,50 @@
 #define BOARD_SD_SPI_CLK       7
 #define BOARD_SD_SPI_CS        GPIO_NUM_4
 
+#elif defined(BOARD_ATOMS3R_SPK)
+// ============================================================
+// M5Stack Atom S3R + SPK Base (GC9107 128x128, NS4168 I2S DAC)
+// ============================================================
+
+// Display (identical to ATOMS3R)
+#define BOARD_DISPLAY_WIDTH    128
+#define BOARD_DISPLAY_HEIGHT   128
+#define BOARD_DISPLAY_ROTATION 0
+#define BOARD_LCD_SPI_HOST     SPI3_HOST
+#define BOARD_LCD_SCK          15
+#define BOARD_LCD_MOSI         21
+#define BOARD_LCD_DC           42
+#define BOARD_LCD_CS           14
+#define BOARD_LCD_RST          48
+#define BOARD_LCD_BL           16
+#define BOARD_LCD_OFFSET_X     0
+#define BOARD_LCD_OFFSET_Y     32
+#define BOARD_LCD_INVERT       false
+#define BOARD_LCD_SPI_FREQ     40000000
+
+// I2C LED driver for backlight (identical to ATOMS3R)
+#define BOARD_BL_I2C_PORT      I2C_NUM_1
+#define BOARD_BL_I2C_SDA       45
+#define BOARD_BL_I2C_SCL       0
+#define BOARD_BL_I2C_ADDR      0x30
+#define BOARD_BL_I2C_FREQ      400000
+
+// SD Card: SPI mode via SPK Base TF slot (SPI2_HOST)
+// CS is hardwired on PCB → GPIO_NUM_NC (-1)
+#define BOARD_SD_MODE_SPI
+#define BOARD_SD_SPI_HOST      SPI2_HOST
+#define BOARD_SD_SPI_MOSI      6
+#define BOARD_SD_SPI_MISO      8
+#define BOARD_SD_SPI_CLK       7
+#define BOARD_SD_SPI_CS        GPIO_NUM_NC
+
+// I2S Audio output (NS4168 DAC on SPK Base)
+#define BOARD_I2S_BCLK         GPIO_NUM_5
+#define BOARD_I2S_LRCLK        GPIO_NUM_39
+#define BOARD_I2S_DOUT         GPIO_NUM_38
+
 #else
-#error "No board defined! Use -DBOARD_SPOTPEAR or -DBOARD_ATOMS3R"
+#error "No board defined! Use -DBOARD_SPOTPEAR, -DBOARD_ATOMS3R, or -DBOARD_ATOMS3R_SPK"
 #endif
 
 // Max decode resolution (half of Full HD, common to all boards)
