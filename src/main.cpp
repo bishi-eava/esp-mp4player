@@ -158,4 +158,7 @@ extern "C" void app_main(void)
     // audio_task on Core 0 (I2S DMA ISR on Core 0, higher priority than display)
     xTaskCreatePinnedToCore(audio_task, "audio", 20 * 1024, &ctx, 7, nullptr, 0);
 #endif
+
+    // CPU load monitor task on Core 0 (low priority, minimal stack)
+    xTaskCreatePinnedToCore(monitor_task, "monitor", 4 * 1024, &ctx, 1, nullptr, 0);
 }

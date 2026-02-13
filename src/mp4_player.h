@@ -66,3 +66,4 @@ void display_task(void *arg);
 #ifdef BOARD_HAS_AUDIO
 void audio_task(void *arg);
 #endif
+void monitor_task(void *arg);
