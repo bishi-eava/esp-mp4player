@@ -25,16 +25,28 @@
 app_main (Core 0):
   1. init_sdcard()  ← SD SPI を先に初期化（SPIバス競合回避）
   2. init_display() ← Display SPI を後から初期化
-  3. FreeRTOS queue 作成 → demux_task + video_task 起動
+  3. nal_queue + セマフォ作成 → demux/decode/display タスク起動
 
-demux_task (Core 0, 8KB, priority 4):
-  SD読み込み → minimp4 demux → AVCC→AnnexB → frame_msg_t を queue へ送信
-
-video_task (Core 0, 48KB, priority 5):
-  queue から受信 → esp-h264 decode → I420→RGB565 → LovyanGFX display
-
+Core 1                                Core 0
+┌──────────────────┐
+│ demux_task       │
+│ SD + minimp4     │
+│ prio=4, 32KB     │
+└────────┬─────────┘
+         │nal_queue
+┌────────▼─────────┐
+│ decode_task      │                ┌───────────────────┐
+│ H.264 decode     ├─ダブルバッファ→│ display_task      │
+│ + YUV→RGB565     │                │ pushImage (DMA)   │
+│ prio=5, 48KB     │                │ prio=6, 4KB       │
+└──────────────────┘                └───────────────────┘
 [将来] audio_task (Core 1): I2S 外部DAC へ音声出力
 ```
+
+### ダブルバッファ同期
+- `decode_ready` セマフォ: decode完了 → display開始
+- `display_done` セマフォ: display完了 → decode次フレーム可
+- decode_task が frame N+1 をデコード中に display_task が frame N を DMA 転送
 
 ### 初期化順序（重要）
 SD カード初期化を **必ずディスプレイより先に** 行うこと。
@@ -43,9 +55,9 @@ Atom S3R では Display(SPI3_HOST) → SD(SPI2_HOST) の順で初期化すると
 ## Key Files
 - `src/board_config.h` — ボード別GPIO・ディスプレイ・SDカード設定（条件コンパイル）
 - `src/lcd_config.h` — LovyanGFX設定（board_config.hのマクロを使用）
-- `src/main.cpp` — SD→Display初期化、queue作成、demux/videoタスク起動
-- `src/mp4_player.h` — frame_msg_t, player_ctx_t 型定義、タスクエントリーポイント宣言
-- `src/mp4_player.cpp` — demux_task（SD I/O + MP4 demux）、video_task（H.264 decode + display）
+- `src/main.cpp` — SD→Display初期化、nal_queue+セマフォ作成、demux/decode/displayタスク起動
+- `src/mp4_player.h` — frame_msg_t, player_ctx_t 型定義（ダブルバッファ・セマフォ含む）、タスク宣言
+- `src/mp4_player.cpp` — demux_task（SD I/O + MP4 demux）、decode_task（H.264 decode + YUV→RGB565）、display_task（pushImage DMA転送）
 - `src/yuv2rgb.h` — I420→RGB565変換
 - `platformio.ini` — マルチ環境設定（spotpear/atoms3r）
 - `sdkconfig.defaults.spotpear` — SpotPear用sdkconfig（Octal PSRAM, 16MB Flash）

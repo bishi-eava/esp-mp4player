@@ -24,7 +24,6 @@ static const char *TAG = "mp4player";
 #define READ_BUF_SIZE  (64 * 1024)
 
 // --- minimp4 file read callback ---
-// demux_task 内のローカル変数を参照するため、token に FILE* を渡す
 static int mp4_read_callback(int64_t offset, void *buffer, size_t size, void *token)
 {
     FILE *f = (FILE *)token;
@@ -100,7 +99,7 @@ static bool send_nal_to_queue(QueueHandle_t queue, const uint8_t *nal_data, int 
 void demux_task(void *arg)
 {
     player_ctx_t *ctx = (player_ctx_t *)arg;
-    QueueHandle_t queue = ctx->video_queue;
+    QueueHandle_t queue = ctx->nal_queue;
 
     ESP_LOGI(TAG, "demux_task started: %s", ctx->filepath);
 
@@ -150,7 +149,7 @@ void demux_task(void *arg)
         MP4D_track_t *tr = &mp4.track[video_track];
         unsigned timescale = tr->timescale;
 
-        // Set video dimensions in shared context (video_task reads these)
+        // Set video dimensions in shared context (decode_task reads these)
         int vw = tr->SampleDescription.video.width;
         int vh = tr->SampleDescription.video.height;
         if (vw <= 0 || vw > BOARD_DISPLAY_WIDTH) vw = BOARD_DISPLAY_WIDTH;
@@ -172,7 +171,7 @@ void demux_task(void *arg)
             goto send_eos;
         }
 
-        // Send SPS/PPS to video_task
+        // Send SPS/PPS to decode_task
         int sps_bytes = 0, pps_bytes = 0;
         const void *sps = MP4D_read_sps(&mp4, video_track, 0, &sps_bytes);
         const void *pps = MP4D_read_pps(&mp4, video_track, 0, &pps_bytes);
@@ -255,22 +254,21 @@ send_eos:
 }
 
 // ============================================================
-// video_task: queue から NAL 受信 → H.264 decode → display
+// decode_task: queue から NAL 受信 → H.264 decode → RGB565 変換
+//              → ダブルバッファ経由で display_task に渡す
 // ============================================================
-void video_task(void *arg)
+void decode_task(void *arg)
 {
     player_ctx_t *ctx = (player_ctx_t *)arg;
-    LGFX *display = ctx->display;
-    QueueHandle_t queue = ctx->video_queue;
+    QueueHandle_t queue = ctx->nal_queue;
 
-    ESP_LOGI(TAG, "video_task started");
+    ESP_LOGI(TAG, "decode_task started");
 
-    // Wait for demux_task to set video dimensions (first SPS/PPS message signals readiness)
-    // MP4 parsing can take 20+ seconds for large files, so wait indefinitely
+    // Wait for demux_task to set video dimensions (first SPS/PPS signals readiness)
     frame_msg_t first_msg;
     if (xQueuePeek(queue, &first_msg, portMAX_DELAY) != pdTRUE) {
         ESP_LOGE(TAG, "Failed waiting for first frame from demux");
-        goto wait_eos;
+        goto signal_eos;
     }
 
     {
@@ -278,18 +276,26 @@ void video_task(void *arg)
         int video_h = ctx->video_h;
         if (video_w <= 0) video_w = BOARD_DISPLAY_WIDTH;
         if (video_h <= 0) video_h = BOARD_DISPLAY_HEIGHT;
-        int display_x = (BOARD_DISPLAY_WIDTH - video_w) / 2;
-        int display_y = (BOARD_DISPLAY_HEIGHT - video_h) / 2;
+        ctx->display_x = (BOARD_DISPLAY_WIDTH - video_w) / 2;
+        ctx->display_y = (BOARD_DISPLAY_HEIGHT - video_h) / 2;
 
-        ESP_LOGI(TAG, "Video: %dx%d, display offset: (%d,%d)", video_w, video_h, display_x, display_y);
+        ESP_LOGI(TAG, "Video: %dx%d, display offset: (%d,%d)",
+                 video_w, video_h, ctx->display_x, ctx->display_y);
 
-        // Allocate RGB565 buffer
-        uint16_t *rgb565_buf = (uint16_t *)heap_caps_malloc(
-            video_w * video_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-        if (!rgb565_buf) {
-            ESP_LOGE(TAG, "Failed to allocate RGB565 buffer");
-            goto wait_eos;
+        // Allocate RGB565 double buffers in PSRAM
+        size_t buf_size = video_w * video_h * sizeof(uint16_t);
+        ctx->rgb_buf[0] = (uint16_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
+        ctx->rgb_buf[1] = (uint16_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
+        if (!ctx->rgb_buf[0] || !ctx->rgb_buf[1]) {
+            ESP_LOGE(TAG, "Failed to allocate RGB565 double buffers (%d bytes each)", buf_size);
+            heap_caps_free(ctx->rgb_buf[0]);
+            heap_caps_free(ctx->rgb_buf[1]);
+            goto signal_eos;
         }
+        ESP_LOGI(TAG, "Double buffer allocated: 2 x %d bytes in PSRAM", buf_size);
+
+        // Give initial display_done so decode can start writing to buf[0]
+        xSemaphoreGive(ctx->display_done);
 
         // Create H.264 decoder
         esp_h264_dec_cfg_t dec_cfg = {
@@ -300,24 +306,26 @@ void video_task(void *arg)
         esp_h264_err_t err = esp_h264_dec_sw_new(&dec_cfg, &decoder);
         if (err != ESP_H264_ERR_OK || !decoder) {
             ESP_LOGE(TAG, "Failed to create H.264 decoder: %d", err);
-            heap_caps_free(rgb565_buf);
-            goto wait_eos;
+            heap_caps_free(ctx->rgb_buf[0]);
+            heap_caps_free(ctx->rgb_buf[1]);
+            goto signal_eos;
         }
 
         err = esp_h264_dec_open(decoder);
         if (err != ESP_H264_ERR_OK) {
             ESP_LOGE(TAG, "Failed to open H.264 decoder: %d", err);
             esp_h264_dec_del(decoder);
-            heap_caps_free(rgb565_buf);
-            goto wait_eos;
+            heap_caps_free(ctx->rgb_buf[0]);
+            heap_caps_free(ctx->rgb_buf[1]);
+            goto signal_eos;
         }
 
         ESP_LOGI(TAG, "H.264 decoder initialized");
-        display->fillScreen(TFT_BLACK);
 
         unsigned decoded_frames = 0;
         unsigned skipped_frames = 0;
         int64_t start_time = esp_timer_get_time();
+        int write_idx = 0;
 
         // Receive and decode loop
         frame_msg_t msg;
@@ -354,8 +362,18 @@ void video_task(void *arg)
                 in_frame.raw_data.len -= in_frame.consume;
 
                 if (out_frame.out_size > 0 && out_frame.outbuf) {
-                    i420_to_rgb565(out_frame.outbuf, rgb565_buf, video_w, video_h);
-                    display->pushImage(display_x, display_y, video_w, video_h, rgb565_buf);
+                    // Wait for display_task to finish with previous buffer
+                    xSemaphoreTake(ctx->display_done, portMAX_DELAY);
+
+                    // Convert YUV→RGB565 into write buffer
+                    i420_to_rgb565(out_frame.outbuf, ctx->rgb_buf[write_idx], video_w, video_h);
+
+                    // Signal display_task with the buffer index
+                    ctx->active_buf = write_idx;
+                    xSemaphoreGive(ctx->decode_ready);
+
+                    // Swap buffer for next frame
+                    write_idx ^= 1;
                     decoded_frames++;
                 }
             }
@@ -376,6 +394,9 @@ void video_task(void *arg)
             }
         }
 
+        // Wait for last display to finish
+        xSemaphoreTake(ctx->display_done, pdMS_TO_TICKS(1000));
+
         int64_t total_time_us = esp_timer_get_time() - start_time;
         float total_time_s = total_time_us / 1000000.0f;
         float avg_fps = (total_time_s > 0) ? decoded_frames / total_time_s : 0;
@@ -385,31 +406,66 @@ void video_task(void *arg)
 
         esp_h264_dec_close(decoder);
         esp_h264_dec_del(decoder);
-        heap_caps_free(rgb565_buf);
+        heap_caps_free(ctx->rgb_buf[0]);
+        heap_caps_free(ctx->rgb_buf[1]);
+        ctx->rgb_buf[0] = nullptr;
+        ctx->rgb_buf[1] = nullptr;
     }
 
-    // Show completion message
-    display->fillScreen(TFT_BLACK);
-    display->setCursor(10, 10);
-    display->setTextColor(TFT_GREEN, TFT_BLACK);
-    display->println("Playback finished");
-    ESP_LOGI(TAG, "video_task done");
-    vTaskDelete(nullptr);
-    return;
+signal_eos:
+    // Signal display_task to exit
+    ctx->pipeline_eos = true;
+    xSemaphoreGive(ctx->decode_ready);
 
-wait_eos:
-    // Drain queue until EOS (cleanup path)
+    // Drain remaining queue messages
     {
         frame_msg_t msg;
-        while (xQueueReceive(queue, &msg, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        while (xQueueReceive(queue, &msg, 0) == pdTRUE) {
             if (msg.data) heap_caps_free(msg.data);
             if (msg.eos) break;
         }
     }
+
+    ESP_LOGI(TAG, "decode_task done");
+    vTaskDelete(nullptr);
+}
+
+// ============================================================
+// display_task: ダブルバッファから RGB565 を SPI DMA で LCD に転送
+// ============================================================
+void display_task(void *arg)
+{
+    player_ctx_t *ctx = (player_ctx_t *)arg;
+    LGFX *display = ctx->display;
+
+    ESP_LOGI(TAG, "display_task started");
     display->fillScreen(TFT_BLACK);
-    display->setCursor(10, 10);
-    display->setTextColor(TFT_RED, TFT_BLACK);
-    display->println("Decoder init failed");
-    ESP_LOGE(TAG, "video_task failed");
+
+    while (true) {
+        // Wait for decode_task to fill a buffer
+        if (xSemaphoreTake(ctx->decode_ready, pdMS_TO_TICKS(10000)) != pdTRUE) {
+            if (ctx->pipeline_eos) break;
+            continue;
+        }
+
+        if (ctx->pipeline_eos) {
+            display->fillScreen(TFT_BLACK);
+            display->setCursor(10, 10);
+            display->setTextColor(TFT_GREEN, TFT_BLACK);
+            display->println("Playback finished");
+            break;
+        }
+
+        // Push the active buffer to LCD via SPI DMA
+        int buf_idx = ctx->active_buf;
+        display->pushImage(ctx->display_x, ctx->display_y,
+                           ctx->video_w, ctx->video_h,
+                           ctx->rgb_buf[buf_idx]);
+
+        // Signal decode_task that this buffer is free
+        xSemaphoreGive(ctx->display_done);
+    }
+
+    ESP_LOGI(TAG, "display_task done");
     vTaskDelete(nullptr);
 }

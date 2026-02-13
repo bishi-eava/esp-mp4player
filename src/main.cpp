@@ -1,6 +1,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "board_config.h"
@@ -128,17 +129,21 @@ extern "C" void app_main(void)
         return;
     }
 
-    // Phase 3: Create queue and playback tasks
+    // Phase 3: Create queues, semaphores, and playback tasks
     display.println("Playing video...");
     vTaskDelay(pdMS_TO_TICKS(500));
 
     static player_ctx_t ctx = {};
     ctx.filepath = MP4_FILE_PATH;
     ctx.display = &display;
-    ctx.video_queue = xQueueCreate(4, sizeof(frame_msg_t));
+    ctx.nal_queue = xQueueCreate(4, sizeof(frame_msg_t));
+    ctx.decode_ready = xSemaphoreCreateBinary();
+    ctx.display_done = xSemaphoreCreateBinary();
 
-    // video_task on Core 0 (display SPI3 ISR is on Core 0)
-    // demux_task on Core 1 (SD SPI2 I/O separated from display)
-    xTaskCreatePinnedToCore(video_task, "video", 48 * 1024, &ctx, 5, nullptr, 0);
-    xTaskCreatePinnedToCore(demux_task, "demux", 32 * 1024, &ctx, 4, nullptr, 1);
+    // decode_task on Core 1 (H.264 decode is CPU-heavy)
+    // display_task on Core 0 (SPI DMA ISR is on Core 0)
+    // demux_task on Core 1 (SD I/O, mostly waiting, shares Core 1 with decode)
+    xTaskCreatePinnedToCore(decode_task,  "decode",  48 * 1024, &ctx, 5, nullptr, 1);
+    xTaskCreatePinnedToCore(display_task, "display",  4 * 1024, &ctx, 6, nullptr, 0);
+    xTaskCreatePinnedToCore(demux_task,   "demux",   32 * 1024, &ctx, 4, nullptr, 1);
 }
