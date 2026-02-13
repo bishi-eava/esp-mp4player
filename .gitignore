@@ -8,9 +8,8 @@
 managed_components/
 
 # ESP-IDF generated config (per-environment)
-sdkconfig.esp32-s3-devkitm-1
-sdkconfig.spotpear
-sdkconfig.atoms3r
+sdkconfig.*
+!sdkconfig.defaults.*
 
 # macOS
 .DS_Store
