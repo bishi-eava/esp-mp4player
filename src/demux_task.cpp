@@ -5,20 +5,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_heap_caps.h"
 
 #include "mp4_player.h"
 #include "board_config.h"
 
 // Redirect minimp4 allocations to PSRAM (internal RAM is too limited for large track data)
-static void* mp4_psram_malloc(size_t size) {
-    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-}
-static void* mp4_psram_realloc(void *ptr, size_t size) {
-    return heap_caps_realloc(ptr, size, MALLOC_CAP_SPIRAM);
-}
-#define malloc mp4_psram_malloc
-#define realloc mp4_psram_realloc
+#define malloc  mp4::psram_malloc
+#define realloc mp4::psram_realloc
 
 #define MINIMP4_IMPLEMENTATION
 #include "minimp4.h"
@@ -28,25 +21,30 @@ static void* mp4_psram_realloc(void *ptr, size_t size) {
 
 static const char *TAG = "demux";
 
-#define READ_BUF_SIZE  (64 * 1024)
+namespace mp4 {
 
-// --- minimp4 file read callback ---
-static int mp4_read_callback(int64_t offset, void *buffer, size_t size, void *token)
+void DemuxStage::task_func(void *arg)
+{
+    auto *self = static_cast<DemuxStage *>(arg);
+    self->run();
+    vTaskDelete(nullptr);
+}
+
+int DemuxStage::mp4_read_cb(int64_t offset, void *buffer, size_t size, void *token)
 {
     FILE *f = (FILE *)token;
     if (fseek(f, (long)offset, SEEK_SET) != 0) return 1;
     return (fread(buffer, 1, size, f) != size) ? 1 : 0;
 }
 
-// --- Build Annex B NAL unit from AVCC data ---
-static int build_annex_b_nal(uint8_t *dst, int dst_capacity,
-                              const uint8_t *src, int src_size)
+int DemuxStage::build_annex_b_nal(uint8_t *dst, int capacity,
+                                   const uint8_t *src, int size)
 {
     int dst_pos = 0;
     int src_pos = 0;
 
-    while (src_pos < src_size) {
-        if (src_pos + 4 > src_size) break;
+    while (src_pos < size) {
+        if (src_pos + 4 > size) break;
 
         uint32_t nal_size = ((uint32_t)src[src_pos] << 24) |
                             ((uint32_t)src[src_pos + 1] << 16) |
@@ -54,8 +52,8 @@ static int build_annex_b_nal(uint8_t *dst, int dst_capacity,
                             ((uint32_t)src[src_pos + 3]);
         src_pos += 4;
 
-        if ((int)(src_pos + nal_size) > src_size) break;
-        if (dst_pos + 4 + (int)nal_size > dst_capacity) break;
+        if ((int)(src_pos + nal_size) > size) break;
+        if (dst_pos + 4 + (int)nal_size > capacity) break;
 
         dst[dst_pos++] = 0x00;
         dst[dst_pos++] = 0x00;
@@ -69,50 +67,83 @@ static int build_annex_b_nal(uint8_t *dst, int dst_capacity,
     return dst_pos;
 }
 
-// --- Send NAL data via queue (allocates PSRAM copy) ---
-static bool send_nal_to_queue(QueueHandle_t queue, const uint8_t *nal_data, int nal_size,
-                               int64_t pts_us, bool is_sps_pps)
+bool DemuxStage::send_nal(const uint8_t *data, int size, int64_t pts_us, bool is_sps_pps)
 {
-    uint8_t *buf = (uint8_t *)heap_caps_malloc(nal_size, MALLOC_CAP_SPIRAM);
+    uint8_t *buf = psram_alloc<uint8_t>(size);
     if (!buf) {
-        ESP_LOGE(TAG, "Failed to allocate %d bytes for queue frame", nal_size);
+        ESP_LOGE(TAG, "Failed to allocate %d bytes for queue frame", size);
         return false;
     }
-    memcpy(buf, nal_data, nal_size);
+    memcpy(buf, data, size);
 
-    frame_msg_t msg = {};
+    FrameMsg msg = {};
     msg.data = buf;
-    msg.size = nal_size;
+    msg.size = size;
     msg.pts_us = pts_us;
     msg.is_sps_pps = is_sps_pps;
     msg.eos = false;
 
-    if (xQueueSend(queue, &msg, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    if (xQueueSend(sync_.nal_queue, &msg, pdMS_TO_TICKS(kQueueSendTimeoutMs)) != pdTRUE) {
         ESP_LOGE(TAG, "Queue send timeout");
-        heap_caps_free(buf);
+        psram_free(buf);
         return false;
     }
     return true;
 }
 
-// ============================================================
-// demux_task: MP4 demux + SD I/O → queue へ NAL フレーム送信
-// ============================================================
-void demux_task(void *arg)
+#ifdef BOARD_HAS_AUDIO
+bool DemuxStage::send_audio(const uint8_t *data, int size, int64_t pts_us)
 {
-    player_ctx_t *ctx = (player_ctx_t *)arg;
-    QueueHandle_t queue = ctx->nal_queue;
+    uint8_t *buf = psram_alloc<uint8_t>(size);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to alloc audio frame %d bytes", size);
+        return false;
+    }
+    memcpy(buf, data, size);
 
-    ESP_LOGI(TAG, "demux_task started: %s", ctx->filepath);
+    AudioMsg msg = {};
+    msg.data   = buf;
+    msg.size   = size;
+    msg.pts_us = pts_us;
+    msg.eos    = false;
 
-    FILE *f = fopen(ctx->filepath, "rb");
+    if (xQueueSend(sync_.audio_queue, &msg, pdMS_TO_TICKS(kQueueSendTimeoutMs)) != pdTRUE) {
+        ESP_LOGE(TAG, "Audio queue send timeout");
+        psram_free(buf);
+        return false;
+    }
+    return true;
+}
+#endif
+
+void DemuxStage::send_eos()
+{
+#ifdef BOARD_HAS_AUDIO
+    if (sync_.audio_queue) {
+        AudioMsg aeos = {};
+        aeos.eos = true;
+        xQueueSend(sync_.audio_queue, &aeos, portMAX_DELAY);
+        ESP_LOGI(TAG, "Audio EOS sent");
+    }
+#endif
+    FrameMsg eos = {};
+    eos.eos = true;
+    xQueueSend(sync_.nal_queue, &eos, portMAX_DELAY);
+    ESP_LOGI(TAG, "EOS sent, exiting");
+}
+
+void DemuxStage::run()
+{
+    ESP_LOGI(TAG, "demux_task started: %s", filepath_);
+
+    FILE *f = fopen(filepath_, "rb");
     if (!f) {
-        ESP_LOGE(TAG, "Failed to open file: %s", ctx->filepath);
-        goto send_eos;
+        ESP_LOGE(TAG, "Failed to open file: %s", filepath_);
+        send_eos();
+        return;
     }
 
-    // Increase stdio buffer to reduce SD card SPI transactions
-    setvbuf(f, NULL, _IOFBF, 8 * 1024);
+    setvbuf(f, NULL, _IOFBF, kStdioBufSize);
 
     {
         fseek(f, 0, SEEK_END);
@@ -121,10 +152,11 @@ void demux_task(void *arg)
         ESP_LOGI(TAG, "File size: %lld bytes", file_size);
 
         MP4D_demux_t mp4;
-        if (!MP4D_open(&mp4, mp4_read_callback, f, file_size)) {
+        if (!MP4D_open(&mp4, mp4_read_cb, f, file_size)) {
             ESP_LOGE(TAG, "MP4D_open failed");
             fclose(f);
-            goto send_eos;
+            send_eos();
+            return;
         }
 
         ESP_LOGI(TAG, "MP4 tracks: %d", mp4.track_count);
@@ -148,34 +180,35 @@ void demux_task(void *arg)
             ESP_LOGE(TAG, "No H.264 video track found");
             MP4D_close(&mp4);
             fclose(f);
-            goto send_eos;
+            send_eos();
+            return;
         }
 
         MP4D_track_t *tr = &mp4.track[video_track];
         unsigned timescale = tr->timescale;
 
-        // Set video dimensions in shared context (decode_task reads these)
         int vw = tr->SampleDescription.video.width;
         int vh = tr->SampleDescription.video.height;
         if (vw <= 0 || vh <= 0) {
             ESP_LOGE(TAG, "Invalid video dimensions: %dx%d", vw, vh);
             MP4D_close(&mp4);
             fclose(f);
-            goto send_eos;
+            send_eos();
+            return;
         }
         if (vw > BOARD_MAX_DECODE_WIDTH || vh > BOARD_MAX_DECODE_HEIGHT) {
             ESP_LOGE(TAG, "Video %dx%d exceeds max decode resolution %dx%d",
                      vw, vh, BOARD_MAX_DECODE_WIDTH, BOARD_MAX_DECODE_HEIGHT);
             MP4D_close(&mp4);
             fclose(f);
-            goto send_eos;
+            send_eos();
+            return;
         }
-        ctx->video_w = vw;
-        ctx->video_h = vh;
+        video_info_.video_w = vw;
+        video_info_.video_h = vh;
         ESP_LOGI(TAG, "Video dimensions: %dx%d", vw, vh);
 
 #ifdef BOARD_HAS_AUDIO
-        // Find AAC audio track
         int audio_track = -1;
         for (unsigned i = 0; i < mp4.track_count; i++) {
             if (mp4.track[i].handler_type == MP4D_HANDLER_TYPE_SOUN &&
@@ -192,13 +225,13 @@ void demux_task(void *arg)
 
         if (audio_track >= 0) {
             MP4D_track_t *atr = &mp4.track[audio_track];
-            ctx->audio_sample_rate = atr->SampleDescription.audio.samplerate_hz;
-            ctx->audio_channels    = atr->SampleDescription.audio.channelcount;
+            audio_info_.sample_rate = atr->SampleDescription.audio.samplerate_hz;
+            audio_info_.channels    = atr->SampleDescription.audio.channelcount;
             if (atr->dsi && atr->dsi_bytes > 0) {
-                ctx->audio_dsi = (uint8_t *)heap_caps_malloc(atr->dsi_bytes, MALLOC_CAP_SPIRAM);
-                if (ctx->audio_dsi) {
-                    memcpy(ctx->audio_dsi, atr->dsi, atr->dsi_bytes);
-                    ctx->audio_dsi_bytes = atr->dsi_bytes;
+                audio_info_.dsi = psram_alloc<uint8_t>(atr->dsi_bytes);
+                if (audio_info_.dsi) {
+                    memcpy(audio_info_.dsi, atr->dsi, atr->dsi_bytes);
+                    audio_info_.dsi_bytes = atr->dsi_bytes;
                 }
             }
         } else {
@@ -207,19 +240,20 @@ void demux_task(void *arg)
 #endif
 
         // Allocate read/nal buffers
-        uint8_t *read_buf = (uint8_t *)heap_caps_malloc(READ_BUF_SIZE, MALLOC_CAP_SPIRAM);
-        uint8_t *nal_buf  = (uint8_t *)heap_caps_malloc(READ_BUF_SIZE, MALLOC_CAP_SPIRAM);
+        uint8_t *read_buf = psram_alloc<uint8_t>(kReadBufSize);
+        uint8_t *nal_buf  = psram_alloc<uint8_t>(kReadBufSize);
 
         if (!read_buf || !nal_buf) {
             ESP_LOGE(TAG, "Failed to allocate demux buffers in PSRAM");
-            heap_caps_free(read_buf);
-            heap_caps_free(nal_buf);
+            safe_free(read_buf);
+            safe_free(nal_buf);
             MP4D_close(&mp4);
             fclose(f);
-            goto send_eos;
+            send_eos();
+            return;
         }
 
-        // Send SPS/PPS to decode_task
+        // Send SPS/PPS
         int sps_bytes = 0, pps_bytes = 0;
         const void *sps = MP4D_read_sps(&mp4, video_track, 0, &sps_bytes);
         const void *pps = MP4D_read_pps(&mp4, video_track, 0, &pps_bytes);
@@ -232,7 +266,7 @@ void demux_task(void *arg)
             nal_buf[nal_len++] = 0x01;
             memcpy(nal_buf + nal_len, sps, sps_bytes);
             nal_len += sps_bytes;
-            send_nal_to_queue(queue, nal_buf, nal_len, 0, true);
+            send_nal(nal_buf, nal_len, 0, true);
             ESP_LOGI(TAG, "SPS sent: %d bytes", sps_bytes);
         }
 
@@ -244,17 +278,15 @@ void demux_task(void *arg)
             nal_buf[nal_len++] = 0x01;
             memcpy(nal_buf + nal_len, pps, pps_bytes);
             nal_len += pps_bytes;
-            send_nal_to_queue(queue, nal_buf, nal_len, 0, true);
+            send_nal(nal_buf, nal_len, 0, true);
             ESP_LOGI(TAG, "PPS sent: %d bytes", pps_bytes);
         }
 
-        // Frame loop: read from SD → AVCC→AnnexB → send via queue
         unsigned total_frames = tr->sample_count;
         ESP_LOGI(TAG, "Starting demux: %d video frames, timescale=%u", total_frames, timescale);
 
 #ifdef BOARD_HAS_AUDIO
-        if (audio_track >= 0 && ctx->audio_queue) {
-            // Time-ordered interleaved demux (video + audio)
+        if (audio_track >= 0 && sync_.audio_queue) {
             MP4D_track_t *atr = &mp4.track[audio_track];
             unsigned audio_timescale = atr->timescale;
             unsigned total_audio_frames = atr->sample_count;
@@ -282,12 +314,11 @@ void demux_task(void *arg)
                     a_pts = (audio_timescale > 0) ? (int64_t)a_ts * 1000000LL / audio_timescale : 0;
                 }
 
-                bool send_video = (v_sample < total_frames) &&
-                                  (v_pts <= a_pts || a_sample >= total_audio_frames);
+                bool do_video = (v_sample < total_frames) &&
+                                (v_pts <= a_pts || a_sample >= total_audio_frames);
 
-                if (send_video) {
-                    // Send video frame
-                    if (v_bytes == 0 || v_bytes > READ_BUF_SIZE) {
+                if (do_video) {
+                    if (v_bytes == 0 || v_bytes > kReadBufSize) {
                         v_sample++;
                         continue;
                     }
@@ -296,19 +327,18 @@ void demux_task(void *arg)
                         ESP_LOGE(TAG, "Failed to read video frame %d", v_sample);
                         break;
                     }
-                    int nal_size = build_annex_b_nal(nal_buf, READ_BUF_SIZE, read_buf, v_bytes);
+                    int nal_size = build_annex_b_nal(nal_buf, kReadBufSize, read_buf, v_bytes);
                     if (nal_size <= 0) {
                         v_sample++;
                         continue;
                     }
-                    if (!send_nal_to_queue(queue, nal_buf, nal_size, v_pts, false)) {
+                    if (!send_nal(nal_buf, nal_size, v_pts, false)) {
                         ESP_LOGE(TAG, "Failed to send video frame %d", v_sample);
                         break;
                     }
                     v_sample++;
                 } else {
-                    // Send audio frame
-                    if (a_bytes == 0 || a_bytes > READ_BUF_SIZE) {
+                    if (a_bytes == 0 || a_bytes > kReadBufSize) {
                         a_sample++;
                         continue;
                     }
@@ -317,23 +347,7 @@ void demux_task(void *arg)
                         ESP_LOGE(TAG, "Failed to read audio frame %d", a_sample);
                         break;
                     }
-
-                    uint8_t *abuf = (uint8_t *)heap_caps_malloc(a_bytes, MALLOC_CAP_SPIRAM);
-                    if (!abuf) {
-                        ESP_LOGE(TAG, "Failed to alloc audio frame %d", a_sample);
-                        break;
-                    }
-                    memcpy(abuf, read_buf, a_bytes);
-
-                    audio_msg_t amsg = {};
-                    amsg.data   = abuf;
-                    amsg.size   = a_bytes;
-                    amsg.pts_us = a_pts;
-                    amsg.eos    = false;
-
-                    if (xQueueSend(ctx->audio_queue, &amsg, pdMS_TO_TICKS(5000)) != pdTRUE) {
-                        ESP_LOGE(TAG, "Audio queue send timeout");
-                        heap_caps_free(abuf);
+                    if (!send_audio(read_buf, a_bytes, a_pts)) {
                         break;
                     }
                     a_sample++;
@@ -342,7 +356,6 @@ void demux_task(void *arg)
         } else
 #endif
         {
-            // Video-only frame loop (original path)
             for (unsigned sample = 0; sample < total_frames; sample++) {
                 unsigned frame_bytes = 0;
                 unsigned timestamp = 0;
@@ -351,7 +364,7 @@ void demux_task(void *arg)
                 MP4D_file_offset_t offset = MP4D_frame_offset(&mp4, video_track, sample,
                                                                &frame_bytes, &timestamp, &duration);
 
-                if (frame_bytes == 0 || frame_bytes > READ_BUF_SIZE) {
+                if (frame_bytes == 0 || frame_bytes > kReadBufSize) {
                     ESP_LOGW(TAG, "Frame %d: invalid size %d, skipping", sample, frame_bytes);
                     continue;
                 }
@@ -362,7 +375,7 @@ void demux_task(void *arg)
                     break;
                 }
 
-                int nal_size = build_annex_b_nal(nal_buf, READ_BUF_SIZE, read_buf, frame_bytes);
+                int nal_size = build_annex_b_nal(nal_buf, kReadBufSize, read_buf, frame_bytes);
                 if (nal_size <= 0) {
                     ESP_LOGW(TAG, "Frame %d: AVCC to Annex B conversion failed", sample);
                     continue;
@@ -370,33 +383,20 @@ void demux_task(void *arg)
 
                 int64_t pts_us = (timescale > 0) ? (int64_t)timestamp * 1000000LL / timescale : 0;
 
-                if (!send_nal_to_queue(queue, nal_buf, nal_size, pts_us, false)) {
+                if (!send_nal(nal_buf, nal_size, pts_us, false)) {
                     ESP_LOGE(TAG, "Failed to send frame %d", sample);
                     break;
                 }
             }
         }
 
-        heap_caps_free(read_buf);
-        heap_caps_free(nal_buf);
+        psram_free(read_buf);
+        psram_free(nal_buf);
         MP4D_close(&mp4);
         fclose(f);
     }
 
-send_eos:
-#ifdef BOARD_HAS_AUDIO
-    if (ctx->audio_queue) {
-        audio_msg_t aeos = {};
-        aeos.eos = true;
-        xQueueSend(ctx->audio_queue, &aeos, portMAX_DELAY);
-        ESP_LOGI(TAG, "Audio EOS sent");
-    }
-#endif
-    {
-        frame_msg_t eos = {};
-        eos.eos = true;
-        xQueueSend(queue, &eos, portMAX_DELAY);
-        ESP_LOGI(TAG, "EOS sent, exiting");
-    }
-    vTaskDelete(nullptr);
+    send_eos();
 }
+
+}  // namespace mp4

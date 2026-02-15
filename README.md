@@ -53,22 +53,43 @@ https://youtube.com/shorts/kdLJf5c8VBU
 
 ## アーキテクチャ
 
+C++ クラスベース + FreeRTOS タスク構成。全コードは `namespace mp4` に配置されています。
+
 ```
-映像: SDカード → minimp4 (demux) → AVCC→Annex B変換 → esp-h264 (decode) → I420→RGB565変換 (スケーリング付き) → LovyanGFX (display)
-音声: SDカード → minimp4 (demux) → esp_audio_codec (AAC decode) → I2S DMA (NS4168)  ※BOARD_HAS_AUDIO時のみ
+映像: SDカード → DemuxStage (minimp4) → AVCC→Annex B変換 → DecodeStage (esp-h264 + YUV→RGB565) → DisplayStage (LovyanGFX DMA)
+音声: SDカード → DemuxStage (minimp4) → AudioPipeline (esp_audio_codec AAC → I2S DMA)  ※BOARD_HAS_AUDIO時のみ
 ```
+
+### クラス構成
+
+| クラス | 役割 | タスク |
+|---|---|---|
+| `Mp4Player` | オーケストレーター。共有状態の所有とタスク起動 | — |
+| `DemuxStage` | SD I/O + MP4 demux + 映像/音声フレームのキュー送信 | Core 1, prio 4, 32KB |
+| `DecodeStage` | H.264 decode + YUV→RGB565変換 + スケーリング | Core 1, prio 5, 48KB |
+| `DisplayStage` | DoubleBuffer から LCD への SPI DMA 転送 | Core 0, prio 6, 4KB |
+| `AudioPipeline` | AAC decode + I2S DMA 出力 | Core 0, prio 7, 20KB |
+
+### 共有状態（旧 `player_ctx_t` を分割）
+
+| 構造体/クラス | 内容 |
+|---|---|
+| `VideoInfo` | 動画解像度、スケーリング後サイズ、表示オフセット |
+| `PipelineSync` | NAL/Audio キュー、セマフォ、EOS フラグ |
+| `DoubleBuffer` | RGB565 ダブルバッファ（PSRAM、swap/read/write 管理） |
+| `AudioInfo` | サンプルレート、チャンネル数、AAC DSI |
 
 ### FreeRTOS タスク構成
 
 ```
 app_main (Core 0):
-  1. init_sdcard()  ← SD を先に初期化（SPIバス競合回避）
-  2. init_display() ← Display を後から初期化
-  3. NAL queue + audio queue + セマフォ作成 → タスク起動
+  1. init_sdcard()          ← SD を先に初期化（SPIバス競合回避）
+  2. init_display()         ← Display を後から初期化
+  3. Mp4Player::start()     → PipelineSync初期化 + Stage構築 + タスク起動
 
 Core 1                                Core 0
 ┌──────────────────┐
-│ demux_task       │
+│ DemuxStage       │
 │ SD + minimp4     │
 │ prio=4, 32KB     │
 │ video + audio    │
@@ -77,29 +98,29 @@ Core 1                                Core 0
  nal_queue  audio_queue (BOARD_HAS_AUDIO時のみ)
     │          │
 ┌───▼──────┐ ┌─▼─────────────────┐
-│decode_task│ │ audio_task         │
+│DecodeStage│ │ AudioPipeline      │
 │H.264+YUV │ │ AAC decode + I2S   │
 │prio=5,48KB│ │ prio=7, 20KB       │
 │ Core 1    │ │ Core 0             │
 └───┬───────┘ └────────────────────┘
-    │ダブルバッファ
+    │ DoubleBuffer
 ┌───▼──────────────┐
-│ display_task     │
+│ DisplayStage     │
 │ pushImage (DMA)  │
 │ prio=6, 4KB      │
 │ Core 0           │
 └──────────────────┘
 ```
 
-- **ダブルバッファ同期:** decode_task がフレーム N+1 をデコード中に display_task がフレーム N を DMA 転送
+- **ダブルバッファ同期:** DecodeStage がフレーム N+1 をデコード中に DisplayStage がフレーム N を DMA 転送
   - `decode_ready` セマフォ: decode完了 → display開始
   - `display_done` セマフォ: display完了 → decode次フレーム可
 - **スケーリング:** LCDより大きい動画はアスペクト比を維持してnearest-neighborで縮小表示（レターボックス/ピラーボックス）
   - デコード上限: 960x540 (Full HD半分)
   - YUV→RGB565変換時にインラインでスケーリング（追加バッファ不要）
   - LCD以下の動画はスケーリングなし（fast path）
-- **音声再生 (BOARD_HAS_AUDIO時のみ):** demux_taskが映像/音声フレームをPTS順にインターリーブ送信
-  - audio_task: AACフレームをesp_audio_codecでPCMデコード → I2S DMA出力
+- **音声再生 (BOARD_HAS_AUDIO時のみ):** DemuxStageが映像/音声フレームをPTS順にインターリーブ送信
+  - AudioPipeline: AACフレームをesp_audio_codecでPCMデコード → I2S DMA出力
   - I2Sクロックが自然にリアルタイム再生速度を制御（バックプレッシャー）
 
 ## 使用ライブラリ

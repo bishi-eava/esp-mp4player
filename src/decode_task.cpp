@@ -4,7 +4,6 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_heap_caps.h"
 
 #include "esp_h264_dec.h"
 
@@ -16,75 +15,82 @@ extern "C" esp_h264_err_t esp_h264_dec_sw_new(const esp_h264_dec_cfg_t *cfg, esp
 
 static const char *TAG = "decode";
 
-// ============================================================
-// decode_task: queue から NAL 受信 → H.264 decode → RGB565 変換
-//              → ダブルバッファ経由で display_task に渡す
-// ============================================================
-void decode_task(void *arg)
-{
-    player_ctx_t *ctx = (player_ctx_t *)arg;
-    QueueHandle_t queue = ctx->nal_queue;
+namespace mp4 {
 
+void DecodeStage::task_func(void *arg)
+{
+    auto *self = static_cast<DecodeStage *>(arg);
+    self->run();
+    vTaskDelete(nullptr);
+}
+
+void DecodeStage::compute_scaling(int video_w, int video_h)
+{
+    bool needs_scaling = (video_w > BOARD_DISPLAY_WIDTH || video_h > BOARD_DISPLAY_HEIGHT);
+    if (needs_scaling) {
+        if (BOARD_DISPLAY_WIDTH * video_h <= BOARD_DISPLAY_HEIGHT * video_w) {
+            video_info_.scaled_w = BOARD_DISPLAY_WIDTH;
+            video_info_.scaled_h = video_h * BOARD_DISPLAY_WIDTH / video_w;
+        } else {
+            video_info_.scaled_h = BOARD_DISPLAY_HEIGHT;
+            video_info_.scaled_w = video_w * BOARD_DISPLAY_HEIGHT / video_h;
+        }
+        video_info_.scaled_w &= ~1;
+        video_info_.scaled_h &= ~1;
+    } else {
+        video_info_.scaled_w = video_w;
+        video_info_.scaled_h = video_h;
+    }
+    video_info_.display_x = (BOARD_DISPLAY_WIDTH - video_info_.scaled_w) / 2;
+    video_info_.display_y = (BOARD_DISPLAY_HEIGHT - video_info_.scaled_h) / 2;
+}
+
+void DecodeStage::drain_queue()
+{
+    FrameMsg msg;
+    while (xQueueReceive(sync_.nal_queue, &msg, 0) == pdTRUE) {
+        safe_free(msg.data);
+        if (msg.eos) break;
+    }
+}
+
+void DecodeStage::run()
+{
     ESP_LOGI(TAG, "decode_task started");
 
-    // Wait for demux_task to set video dimensions (first SPS/PPS signals readiness)
-    frame_msg_t first_msg;
-    if (xQueuePeek(queue, &first_msg, portMAX_DELAY) != pdTRUE) {
+    // Wait for demux_task to set video dimensions
+    FrameMsg first_msg;
+    if (xQueuePeek(sync_.nal_queue, &first_msg, portMAX_DELAY) != pdTRUE) {
         ESP_LOGE(TAG, "Failed waiting for first frame from demux");
         goto signal_eos;
     }
 
     {
-        int video_w = ctx->video_w;
-        int video_h = ctx->video_h;
+        int video_w = video_info_.video_w;
+        int video_h = video_info_.video_h;
         if (video_w <= 0) video_w = BOARD_DISPLAY_WIDTH;
         if (video_h <= 0) video_h = BOARD_DISPLAY_HEIGHT;
 
-        // Calculate aspect-ratio-preserving scale (integer math, downscale only)
-        int scaled_w, scaled_h;
-        bool needs_scaling = (video_w > BOARD_DISPLAY_WIDTH || video_h > BOARD_DISPLAY_HEIGHT);
-        if (needs_scaling) {
-            // Cross-multiply to compare ratios without float:
-            // LCD_W/video_w vs LCD_H/video_h  →  LCD_W*video_h vs LCD_H*video_w
-            if (BOARD_DISPLAY_WIDTH * video_h <= BOARD_DISPLAY_HEIGHT * video_w) {
-                // Width-constrained
-                scaled_w = BOARD_DISPLAY_WIDTH;
-                scaled_h = video_h * BOARD_DISPLAY_WIDTH / video_w;
-            } else {
-                // Height-constrained
-                scaled_h = BOARD_DISPLAY_HEIGHT;
-                scaled_w = video_w * BOARD_DISPLAY_HEIGHT / video_h;
-            }
-            // Ensure even dimensions for YUV subsampling
-            scaled_w &= ~1;
-            scaled_h &= ~1;
-        } else {
-            scaled_w = video_w;
-            scaled_h = video_h;
-        }
+        compute_scaling(video_w, video_h);
 
-        ctx->scaled_w = scaled_w;
-        ctx->scaled_h = scaled_h;
-        ctx->display_x = (BOARD_DISPLAY_WIDTH - scaled_w) / 2;
-        ctx->display_y = (BOARD_DISPLAY_HEIGHT - scaled_h) / 2;
+        int scaled_w = video_info_.scaled_w;
+        int scaled_h = video_info_.scaled_h;
+        bool needs_scaling = (video_w > BOARD_DISPLAY_WIDTH || video_h > BOARD_DISPLAY_HEIGHT);
 
         ESP_LOGI(TAG, "Video: %dx%d -> scaled: %dx%d, offset: (%d,%d)",
-                 video_w, video_h, scaled_w, scaled_h, ctx->display_x, ctx->display_y);
+                 video_w, video_h, scaled_w, scaled_h,
+                 video_info_.display_x, video_info_.display_y);
 
-        // Allocate RGB565 double buffers in PSRAM (scaled size)
-        size_t buf_size = scaled_w * scaled_h * sizeof(uint16_t);
-        ctx->rgb_buf[0] = (uint16_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
-        ctx->rgb_buf[1] = (uint16_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
-        if (!ctx->rgb_buf[0] || !ctx->rgb_buf[1]) {
+        if (!dbuf_.init(scaled_w, scaled_h)) {
+            size_t buf_size = scaled_w * scaled_h * sizeof(uint16_t);
             ESP_LOGE(TAG, "Failed to allocate RGB565 double buffers (%d bytes each)", buf_size);
-            heap_caps_free(ctx->rgb_buf[0]);
-            heap_caps_free(ctx->rgb_buf[1]);
+            dbuf_.deinit();
             goto signal_eos;
         }
-        ESP_LOGI(TAG, "Double buffer allocated: 2 x %d bytes in PSRAM", buf_size);
+        ESP_LOGI(TAG, "Double buffer allocated: 2 x %d bytes in PSRAM",
+                 (int)(scaled_w * scaled_h * sizeof(uint16_t)));
 
-        // Give initial display_done so decode can start writing to buf[0]
-        xSemaphoreGive(ctx->display_done);
+        xSemaphoreGive(sync_.display_done);
 
         // Create H.264 decoder
         esp_h264_dec_cfg_t dec_cfg = {
@@ -95,8 +101,7 @@ void decode_task(void *arg)
         esp_h264_err_t err = esp_h264_dec_sw_new(&dec_cfg, &decoder);
         if (err != ESP_H264_ERR_OK || !decoder) {
             ESP_LOGE(TAG, "Failed to create H.264 decoder: %d", err);
-            heap_caps_free(ctx->rgb_buf[0]);
-            heap_caps_free(ctx->rgb_buf[1]);
+            dbuf_.deinit();
             goto signal_eos;
         }
 
@@ -104,8 +109,7 @@ void decode_task(void *arg)
         if (err != ESP_H264_ERR_OK) {
             ESP_LOGE(TAG, "Failed to open H.264 decoder: %d", err);
             esp_h264_dec_del(decoder);
-            heap_caps_free(ctx->rgb_buf[0]);
-            heap_caps_free(ctx->rgb_buf[1]);
+            dbuf_.deinit();
             goto signal_eos;
         }
 
@@ -114,12 +118,10 @@ void decode_task(void *arg)
         unsigned decoded_frames = 0;
         unsigned skipped_frames = 0;
         int64_t start_time = esp_timer_get_time();
-        int write_idx = 0;
 
-        // Receive and decode loop
-        frame_msg_t msg;
+        FrameMsg msg;
         while (true) {
-            if (xQueueReceive(queue, &msg, pdMS_TO_TICKS(10000)) != pdTRUE) {
+            if (xQueueReceive(sync_.nal_queue, &msg, pdMS_TO_TICKS(kQueueRecvTimeoutMs)) != pdTRUE) {
                 ESP_LOGW(TAG, "Queue receive timeout");
                 continue;
             }
@@ -151,28 +153,23 @@ void decode_task(void *arg)
                 in_frame.raw_data.len -= in_frame.consume;
 
                 if (out_frame.out_size > 0 && out_frame.outbuf) {
-                    // Wait for display_task to finish with previous buffer
-                    xSemaphoreTake(ctx->display_done, portMAX_DELAY);
+                    xSemaphoreTake(sync_.display_done, portMAX_DELAY);
 
-                    // Convert YUV→RGB565 into write buffer
                     if (needs_scaling) {
-                        i420_to_rgb565_scaled(out_frame.outbuf, ctx->rgb_buf[write_idx],
-                                              video_w, video_h, scaled_w, scaled_h);
+                        i420_to_rgb565_scaled(out_frame.outbuf, dbuf_.write_buf(),
+                                               video_w, video_h, scaled_w, scaled_h);
                     } else {
-                        i420_to_rgb565(out_frame.outbuf, ctx->rgb_buf[write_idx], video_w, video_h);
+                        i420_to_rgb565(out_frame.outbuf, dbuf_.write_buf(), video_w, video_h);
                     }
 
-                    // Signal display_task with the buffer index
-                    ctx->active_buf = write_idx;
-                    xSemaphoreGive(ctx->decode_ready);
+                    dbuf_.swap();
+                    xSemaphoreGive(sync_.decode_ready);
 
-                    // Swap buffer for next frame
-                    write_idx ^= 1;
                     decoded_frames++;
                 }
             }
 
-            heap_caps_free(msg.data);
+            psram_free(msg.data);
 
             // Frame timing control based on PTS
             if (!msg.is_sps_pps && msg.pts_us > 0) {
@@ -188,8 +185,7 @@ void decode_task(void *arg)
             }
         }
 
-        // Wait for last display to finish
-        xSemaphoreTake(ctx->display_done, pdMS_TO_TICKS(1000));
+        xSemaphoreTake(sync_.display_done, pdMS_TO_TICKS(kFinalDisplayWaitMs));
 
         int64_t total_time_us = esp_timer_get_time() - start_time;
         float total_time_s = total_time_us / 1000000.0f;
@@ -200,26 +196,15 @@ void decode_task(void *arg)
 
         esp_h264_dec_close(decoder);
         esp_h264_dec_del(decoder);
-        heap_caps_free(ctx->rgb_buf[0]);
-        heap_caps_free(ctx->rgb_buf[1]);
-        ctx->rgb_buf[0] = nullptr;
-        ctx->rgb_buf[1] = nullptr;
+        dbuf_.deinit();
     }
 
 signal_eos:
-    // Signal display_task to exit
-    ctx->pipeline_eos = true;
-    xSemaphoreGive(ctx->decode_ready);
-
-    // Drain remaining queue messages
-    {
-        frame_msg_t msg;
-        while (xQueueReceive(queue, &msg, 0) == pdTRUE) {
-            if (msg.data) heap_caps_free(msg.data);
-            if (msg.eos) break;
-        }
-    }
+    sync_.pipeline_eos = true;
+    xSemaphoreGive(sync_.decode_ready);
+    drain_queue();
 
     ESP_LOGI(TAG, "decode_task done");
-    vTaskDelete(nullptr);
 }
+
+}  // namespace mp4

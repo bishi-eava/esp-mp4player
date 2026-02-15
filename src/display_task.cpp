@@ -6,42 +6,42 @@
 
 static const char *TAG = "display";
 
-// ============================================================
-// display_task: ダブルバッファから RGB565 を SPI DMA で LCD に転送
-// ============================================================
-void display_task(void *arg)
-{
-    player_ctx_t *ctx = (player_ctx_t *)arg;
-    LGFX *display = ctx->display;
+namespace mp4 {
 
+void DisplayStage::task_func(void *arg)
+{
+    auto *self = static_cast<DisplayStage *>(arg);
+    self->run();
+    vTaskDelete(nullptr);
+}
+
+void DisplayStage::run()
+{
     ESP_LOGI(TAG, "display_task started");
-    display->fillScreen(TFT_BLACK);
+    display_.fillScreen(TFT_BLACK);
 
     while (true) {
-        // Wait for decode_task to fill a buffer
-        if (xSemaphoreTake(ctx->decode_ready, pdMS_TO_TICKS(10000)) != pdTRUE) {
-            if (ctx->pipeline_eos) break;
+        if (xSemaphoreTake(sync_.decode_ready, pdMS_TO_TICKS(kSemaphoreTimeoutMs)) != pdTRUE) {
+            if (sync_.pipeline_eos) break;
             continue;
         }
 
-        if (ctx->pipeline_eos) {
-            display->fillScreen(TFT_BLACK);
-            display->setCursor(10, 10);
-            display->setTextColor(TFT_GREEN, TFT_BLACK);
-            display->println("Playback finished");
+        if (sync_.pipeline_eos) {
+            display_.fillScreen(TFT_BLACK);
+            display_.setCursor(10, 10);
+            display_.setTextColor(TFT_GREEN, TFT_BLACK);
+            display_.println("Playback finished");
             break;
         }
 
-        // Push the active buffer to LCD via SPI DMA
-        int buf_idx = ctx->active_buf;
-        display->pushImage(ctx->display_x, ctx->display_y,
-                           ctx->scaled_w, ctx->scaled_h,
-                           ctx->rgb_buf[buf_idx]);
+        display_.pushImage(video_info_.display_x, video_info_.display_y,
+                           video_info_.scaled_w, video_info_.scaled_h,
+                           dbuf_.read_buf());
 
-        // Signal decode_task that this buffer is free
-        xSemaphoreGive(ctx->display_done);
+        xSemaphoreGive(sync_.display_done);
     }
 
     ESP_LOGI(TAG, "display_task done");
-    vTaskDelete(nullptr);
 }
+
+}  // namespace mp4

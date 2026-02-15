@@ -30,16 +30,19 @@
   - **注意:** SPK Baseのラベルは ESP32 (Atom Lite) のGPIO番号で印刷されている。ESP32-S3では異なるGPIOにマッピングされる
 - **パーティション:** 3MB app (esp_audio_codecライブラリにより1MB超)
 
-## Architecture (FreeRTOS タスク構成)
+## Architecture (C++ クラスベース + FreeRTOS タスク)
+
+全コードは `namespace mp4` に配置。各タスクは Stage クラスとして実装（`static task_func()` → `run()` トランポリンパターン）。
+
 ```
 app_main (Core 0):
-  1. init_sdcard()  ← SD SPI を先に初期化（SPIバス競合回避）
-  2. init_display() ← Display SPI を後から初期化
-  3. nal_queue + audio_queue + セマフォ作成 → demux/decode/display/audio タスク起動
+  1. init_sdcard()   ← SD SPI を先に初期化（SPIバス競合回避）
+  2. init_display()  ← Display SPI を後から初期化
+  3. Mp4Player::start() → PipelineSync初期化 + Stage構築 + タスク起動
 
 Core 1                                Core 0
 ┌──────────────────┐
-│ demux_task       │
+│ DemuxStage       │
 │ SD + minimp4     │
 │ prio=4, 32KB     │
 │ video + audio    │
@@ -48,19 +51,27 @@ Core 1                                Core 0
  nal_queue  audio_queue (BOARD_HAS_AUDIO)
     │          │
 ┌───▼──────┐ ┌─▼─────────────────┐
-│decode_task│ │ audio_task         │
+│DecodeStage│ │ AudioPipeline      │
 │H.264+YUV │ │ AAC decode + I2S   │
 │prio=5,48KB│ │ prio=7, 20KB       │
 │ Core 1    │ │ Core 0             │
 └───┬───────┘ └────────────────────┘
-    │ double buffer
+    │ DoubleBuffer
 ┌───▼──────┐
-│display   │
+│DisplayStage│
 │pushImage │
 │prio=6,4KB│
 │ Core 0   │
 └──────────┘
 ```
+
+### 共有状態の分割（旧 player_ctx_t を廃止）
+| 構造体/クラス | 内容 |
+|---|---|
+| `VideoInfo` | video_w/h, scaled_w/h, display_x/y |
+| `PipelineSync` | nal_queue, audio_queue, セマフォ, EOSフラグ |
+| `DoubleBuffer` | RGB565ダブルバッファ（PSRAM, swap/read/write） |
+| `AudioInfo` | sample_rate, channels, DSI |
 
 ### 音声パイプライン (BOARD_HAS_AUDIO)
 - demux_taskが time-ordered interleaved demux でビデオ/オーディオフレームをPTS順に送信
@@ -86,11 +97,15 @@ Atom S3R では Display(SPI3_HOST) → SD(SPI2_HOST) の順で初期化すると
 ## Key Files
 - `src/board_config.h` — ボード別GPIO・ディスプレイ・SDカード・I2S設定（条件コンパイル）
 - `src/lcd_config.h` — LovyanGFX設定（board_config.hのマクロを使用）
-- `src/main.cpp` — SD→Display初期化、nal_queue+audio_queue+セマフォ作成、タスク起動
-- `src/mp4_player.h` — frame_msg_t, audio_msg_t, player_ctx_t 型定義、タスク宣言
-- `src/mp4_player.cpp` — demux_task（SD I/O + MP4 demux + interleaved audio）、decode_task（H.264 decode + YUV→RGB565）、display_task（pushImage DMA転送）
-- `src/audio_player.cpp` — audio_task（AAC decode + I2S output、BOARD_HAS_AUDIO時のみ）
-- `src/yuv2rgb.h` — I420→RGB565変換（スケーリング付き `i420_to_rgb565_scaled()` 含む）
+- `src/player_constants.h` — タスクスタック/優先度/キュー深度/バッファサイズ等の定数
+- `src/psram_alloc.h` — PSRAM/内部RAM確保ヘルパー（`psram_alloc<T>()`, `psram_free()` 等）
+- `src/main.cpp` — SD→Display初期化、Mp4Player::start()でタスク起動
+- `src/mp4_player.h` — namespace mp4: FrameMsg, AudioMsg, VideoInfo, PipelineSync, DoubleBuffer, AudioInfo, Stage/Pipeline クラス宣言, Mp4Player
+- `src/demux_task.cpp` — DemuxStage クラス実装（SD I/O + MP4 demux + interleaved audio）
+- `src/decode_task.cpp` — DecodeStage クラス実装（H.264 decode + YUV→RGB565 + スケーリング）
+- `src/display_task.cpp` — DisplayStage クラス実装（pushImage DMA転送）
+- `src/audio_player.cpp` — AudioPipeline クラス実装（AAC decode + I2S output、BOARD_HAS_AUDIO時のみ）
+- `src/yuv2rgb.h` — namespace mp4: BT.601 YUV→RGB565変換（`yuv_to_rgb565()` 単一コア + scaled/unscaled API）
 - `platformio.ini` — マルチ環境設定（spotpear/atoms3r/atoms3r_spk）
 - `partitions_8MB.csv` — 8MB Flash用カスタムパーティション（3MB app）
 - `sdkconfig.defaults.spotpear` — SpotPear用sdkconfig（Octal PSRAM, 16MB Flash）

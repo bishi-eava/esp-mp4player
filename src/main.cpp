@@ -1,7 +1,5 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
-#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "board_config.h"
@@ -21,12 +19,8 @@
 
 static const char *TAG = "main";
 
-#define MP4_FILE_PATH "/sdcard/video.mp4"
-
-// --- Display ---
 static LGFX display;
 
-// --- SD Card init ---
 static bool init_sdcard(void)
 {
 #ifdef BOARD_SD_MODE_SDMMC
@@ -47,8 +41,8 @@ static bool init_sdcard(void)
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024,
+        .max_files = mp4::kSdMaxFiles,
+        .allocation_unit_size = mp4::kSdAllocUnitSize,
     };
 
     sdmmc_card_t *card;
@@ -79,8 +73,8 @@ static bool init_sdcard(void)
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {};
     mount_config.format_if_mount_failed = false;
-    mount_config.max_files = 5;
-    mount_config.allocation_unit_size = 16 * 1024;
+    mount_config.max_files = mp4::kSdMaxFiles;
+    mount_config.allocation_unit_size = mp4::kSdAllocUnitSize;
 
     sdmmc_card_t *card;
     ret = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot_config, &mount_config, &card);
@@ -96,7 +90,6 @@ static bool init_sdcard(void)
     return true;
 }
 
-// --- Display init ---
 static void init_display(void)
 {
     ESP_LOGI(TAG, "Initializing display");
@@ -110,15 +103,12 @@ static void init_display(void)
 
 extern "C" void app_main(void)
 {
-    // Wait for serial monitor connection
-    vTaskDelay(pdMS_TO_TICKS(5000));
+    vTaskDelay(pdMS_TO_TICKS(mp4::kBootDelayMs));
 
     ESP_LOGI(TAG, "ESP32-S3 MP4 Movie Player starting...");
 
-    // Phase 1: SD card first (SPI bus must be initialized before display to avoid conflict)
     bool sd_ok = init_sdcard();
 
-    // Phase 2: Display
     init_display();
     display.setTextColor(TFT_WHITE, TFT_BLACK);
     display.setTextSize(1);
@@ -132,30 +122,37 @@ extern "C" void app_main(void)
         return;
     }
 
-    // Phase 3: Create queues, semaphores, and playback tasks
     display.println("Playing video...");
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(mp4::kSplashDelayMs));
 
-    static player_ctx_t ctx = {};
-    ctx.filepath = MP4_FILE_PATH;
-    ctx.display = &display;
-    ctx.nal_queue = xQueueCreate(4, sizeof(frame_msg_t));
-    ctx.decode_ready = xSemaphoreCreateBinary();
-    ctx.display_done = xSemaphoreCreateBinary();
+    static mp4::Mp4Player player(display, mp4::kMp4FilePath);
+    player.start();
+}
 
+// --- Mp4Player implementation ---
+
+namespace mp4 {
+
+void Mp4Player::start()
+{
+    sync_.init();
+
+    auto *demux = new DemuxStage(filepath_, sync_, video_info_
 #ifdef BOARD_HAS_AUDIO
-    ctx.audio_queue = xQueueCreate(8, sizeof(audio_msg_t));
+                                  , audio_info_
 #endif
+                                  );
+    auto *decode  = new DecodeStage(sync_, video_info_, dbuf_);
+    auto *disp    = new DisplayStage(sync_, video_info_, dbuf_, display_);
 
-    // decode_task on Core 1 (H.264 decode is CPU-heavy)
-    // display_task on Core 0 (SPI DMA ISR is on Core 0)
-    // demux_task on Core 1 (SD I/O, mostly waiting, shares Core 1 with decode)
-    xTaskCreatePinnedToCore(decode_task,  "decode",  48 * 1024, &ctx, 5, nullptr, 1);
-    xTaskCreatePinnedToCore(display_task, "display",  4 * 1024, &ctx, 6, nullptr, 0);
-    xTaskCreatePinnedToCore(demux_task,   "demux",   32 * 1024, &ctx, 4, nullptr, 1);
+    xTaskCreatePinnedToCore(DecodeStage::task_func,  "decode",  kDecodeStackSize,  decode,  kDecodePriority,  nullptr, kDecodeCore);
+    xTaskCreatePinnedToCore(DisplayStage::task_func, "display", kDisplayStackSize, disp,    kDisplayPriority, nullptr, kDisplayCore);
+    xTaskCreatePinnedToCore(DemuxStage::task_func,   "demux",   kDemuxStackSize,   demux,   kDemuxPriority,   nullptr, kDemuxCore);
 
 #ifdef BOARD_HAS_AUDIO
-    // audio_task on Core 0 (I2S DMA ISR on Core 0, higher priority than display)
-    xTaskCreatePinnedToCore(audio_task, "audio", 20 * 1024, &ctx, 7, nullptr, 0);
+    auto *audio = new AudioPipeline(sync_, audio_info_);
+    xTaskCreatePinnedToCore(AudioPipeline::task_func, "audio", kAudioStackSize, audio, kAudioPriority, nullptr, kAudioCore);
 #endif
 }
+
+}  // namespace mp4
