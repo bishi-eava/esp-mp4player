@@ -1,6 +1,6 @@
 # ESP32-S3 MP4 Movie Player
 
-ESP32-S3搭載の小型LCDボードで、SDカード上のMP4動画（H.264 Baseline Profile）を再生するプレーヤーです。
+ESP32-S3搭載の小型LCDボードで、SDカード上のMP4動画（H.264 Baseline Profile）を再生するプレーヤーです。WiFi AP内蔵で、スマホのブラウザから再生操作やファイル管理が可能です。
 
 > **PSRAM必須:** H.264デコードバッファにPSRAMを使用するため、PSRAM搭載のESP32-S3ボードが必要です。
 
@@ -9,6 +9,17 @@ ESP32-S3搭載の小型LCDボードで、SDカード上のMP4動画（H.264 Base
 実際の動作の様子はこちらをご覧ください。
 
 https://youtube.com/shorts/kdLJf5c8VBU
+
+## 主な機能
+
+- SDカード上のMP4動画（H.264 Baseline + AAC）を再生
+- WiFi AP内蔵 — スマホのブラウザから再生操作・ファイル管理
+- プレイリスト管理 — `/playlist` フォルダ内のMP4を順次再生、サブフォルダ対応
+- 音量調整 — Web UIスライダーでリアルタイム変更（SPK Base構成）
+- A/V同期モード切替 — Audio Priority / Full Video
+- 自動スケーリング — LCD以上のサイズの動画はアスペクト比維持で縮小表示
+- ファイルブラウザ — アップロード・ダウンロード・削除・リネーム・フォルダ作成
+- QRコード表示 — アイドル時にWiFi接続QRをLCDに表示
 
 ## 対応ボード
 
@@ -51,31 +62,59 @@ https://youtube.com/shorts/kdLJf5c8VBU
 - Wiki: https://spotpear.com/wiki/ESP32-S3-1.3-inch-LCD-ST7789-240x240-Display-Screen.html
 - Shop: https://spotpear.com/shop/ESP32-S3-1.3-inch-LCD-ST7789-240x240-Display-Screen.html
 
+## WiFi ファイルサーバー
+
+起動と同時にWiFi APが立ち上がり、スマホやPCのブラウザから操作できます。
+
+| 項目 | 値 |
+|---|---|
+| SSID | `esp-mp4player` |
+| パスワード | `12345678` |
+| URL | `http://192.168.4.1` |
+
+アイドル時はLCDにWiFi接続用のQRコードが表示されます。スマホのカメラで読み取ると自動接続できます。
+
+### プレイヤーページ (`/player`)
+
+- 再生 / 停止 / 次 / 前
+- 音量スライダー (0-100%、ドラッグ中もリアルタイム反映)
+- A/V同期モード切替 (Audio Priority / Full Video)
+- プレイリスト表示・フォルダ選択
+
+### ファイルブラウザページ (`/browse`)
+
+- ファイル一覧・フォルダナビゲーション
+- アップロード（再生停止中のみ、メモリ制約のため）
+- ダウンロード・削除・リネーム・フォルダ作成
+- ストレージ使用量表示
+
 ## アーキテクチャ
 
 C++ クラスベース + FreeRTOS タスク構成。全コードは `namespace mp4` に配置されています。
 
 ```
 映像: SDカード → DemuxStage (minimp4) → AVCC→Annex B変換 → DecodeStage (esp-h264 + YUV→RGB565) → DisplayStage (LovyanGFX DMA)
-音声: SDカード → DemuxStage (minimp4) → AudioPipeline (esp_audio_codec AAC → I2S DMA)  ※BOARD_HAS_AUDIO時のみ
+音声: SDカード → DemuxStage (minimp4) → AudioPipeline (esp_audio_codec AAC → Volume → I2S DMA)  ※BOARD_HAS_AUDIO時のみ
 ```
 
 ### クラス構成
 
 | クラス | 役割 | タスク |
 |---|---|---|
+| `MediaController` | プレイリスト管理・再生制御・音量管理 | — |
+| `FileServer` | WiFi AP + HTTP server + REST API | — |
 | `Mp4Player` | オーケストレーター。共有状態の所有とタスク起動 | — |
 | `DemuxStage` | SD I/O + MP4 demux + 映像/音声フレームのキュー送信 | Core 1, prio 4, 32KB |
 | `DecodeStage` | H.264 decode + YUV→RGB565変換 + スケーリング | Core 1, prio 5, 48KB |
 | `DisplayStage` | DoubleBuffer から LCD への SPI DMA 転送 | Core 0, prio 6, 4KB |
-| `AudioPipeline` | AAC decode + I2S DMA 出力 | Core 0, prio 7, 20KB |
+| `AudioPipeline` | AAC decode + ボリュームスケーリング + I2S DMA 出力 | Core 0, prio 7, 20KB |
 
 ### 共有状態（旧 `player_ctx_t` を分割）
 
 | 構造体/クラス | 内容 |
 |---|---|
 | `VideoInfo` | 動画解像度、スケーリング後サイズ、表示オフセット |
-| `PipelineSync` | NAL/Audio キュー、セマフォ、EOS フラグ |
+| `PipelineSync` | NAL/Audio キュー、セマフォ、EOS フラグ、audio_volume |
 | `DoubleBuffer` | RGB565 ダブルバッファ（PSRAM、swap/read/write 管理） |
 | `AudioInfo` | サンプルレート、チャンネル数、AAC DSI |
 
@@ -85,7 +124,9 @@ C++ クラスベース + FreeRTOS タスク構成。全コードは `namespace m
 app_main (Core 0):
   1. init_sdcard()          ← SD を先に初期化（SPIバス競合回避）
   2. init_display()         ← Display を後から初期化
-  3. Mp4Player::start()     → PipelineSync初期化 + Stage構築 + タスク起動
+  3. FileServer::start()    ← WiFi AP + HTTP server 起動（常時ON）
+  4. MediaController        → プレイリスト管理 + 自動再生
+  5. メインループ            → controller.tick()
 
 Core 1                                Core 0
 ┌──────────────────┐
@@ -120,8 +161,9 @@ Core 1                                Core 0
   - YUV→RGB565変換時にインラインでスケーリング（追加バッファ不要）
   - LCD以下の動画はスケーリングなし（fast path）
 - **音声再生 (BOARD_HAS_AUDIO時のみ):** DemuxStageが映像/音声フレームをPTS順にインターリーブ送信
-  - AudioPipeline: AACフレームをesp_audio_codecでPCMデコード → I2S DMA出力
+  - AudioPipeline: AACフレームをesp_audio_codecでPCMデコード → ボリュームスケーリング → I2S DMA出力
   - I2Sクロックが自然にリアルタイム再生速度を制御（バックプレッシャー）
+  - ボリューム制御: ソフトウェアPCMスケーリング `(sample * vol) >> 8`（Web UIからリアルタイム変更可能）
 
 ## 使用ライブラリ
 
@@ -131,6 +173,7 @@ Core 1                                Core 0
 | esp-h264-component v1.2.0 | H.264ソフトウェアデコーダ (SIMD最適化) | Espressif | https://github.com/espressif/esp-h264-component |
 | minimp4 | MP4コンテナパーサー (シングルヘッダ) | CC0 (Public Domain) | https://github.com/lieff/minimp4 |
 | esp_audio_codec v2.4.0+ | AACデコーダ (BOARD_HAS_AUDIO時のみ) | Espressif | https://github.com/espressif/esp-adf-libs |
+| espressif/qrcode | QRコード生成 (WiFi接続QR表示) | MIT | https://components.espressif.com/components/espressif/qrcode |
 
 ## 開発環境
 
@@ -158,19 +201,23 @@ pio device monitor
 
 ## 動画の準備
 
-ffmpegで再生用のMP4ファイルを変換し、SDカードのルートに `video.mp4` として保存してください。
+SDカードの `playlist` フォルダにMP4ファイルを配置してください。サブフォルダにも対応しています。
+
+WiFi接続後、ブラウザのファイルブラウザページからアップロードすることもできます（再生停止中のみ）。
 
 H.264 Baseline Profile が**必須**です（ソフトウェアデコーダの制限）。
 
 LCDより大きい動画はアスペクト比を維持したまま自動で縮小表示されます（最大対応解像度: 960x540）。
 ただし高解像度の動画はデコード負荷が高くコマ落ちするため、**320x240 程度への事前変換を推奨**します。
 
+> **`-g 15` は必須です。** 15fpsで1秒ごとにキーフレームを挿入します。音声付き再生時のフレームスキップ後に映像が回復するために必要です。
+
 ### 推奨（320x240、アスペクト比維持）
 
 ```bash
 ffmpeg -i input.mp4 \
   -vf "scale=320:-2,fps=15" \
-  -c:v libx264 -profile:v baseline -level 3.0 \
+  -c:v libx264 -profile:v baseline -level 3.0 -g 15 \
   -pix_fmt yuv420p video.mp4
 ```
 
@@ -182,7 +229,7 @@ SPK Base 構成では AAC 音声付き MP4 の再生に対応しています。
 # 320x240 + AAC音声
 ffmpeg -i input.mp4 \
   -vf "scale=320:-2,fps=15" \
-  -c:v libx264 -profile:v baseline -level 3.0 \
+  -c:v libx264 -profile:v baseline -level 3.0 -g 15 \
   -pix_fmt yuv420p \
   -c:a aac -b:a 128k -ar 44100 -ac 1 \
   video.mp4
@@ -194,13 +241,13 @@ ffmpeg -i input.mp4 \
 # SpotPear (240x240)
 ffmpeg -i input.mp4 \
   -vf "scale=240:240,fps=15" \
-  -c:v libx264 -profile:v baseline -level 3.0 \
+  -c:v libx264 -profile:v baseline -level 3.0 -g 15 \
   -pix_fmt yuv420p video.mp4
 
 # Atom S3R (128x128)
 ffmpeg -i input.mp4 \
   -vf "scale=128:128,fps=15" \
-  -c:v libx264 -profile:v baseline -level 3.0 \
+  -c:v libx264 -profile:v baseline -level 3.0 -g 15 \
   -pix_fmt yuv420p video.mp4
 ```
 
@@ -211,6 +258,7 @@ ffmpeg -i input.mp4 \
 | フレームレート | 15fps | デコード性能に合わせた推奨値 |
 | コーデック | libx264 | H.264エンコーダ |
 | プロファイル | Baseline | **必須** (SWデコーダの制限) |
+| キーフレーム間隔 | `-g 15` | **必須** (1秒ごと、フレームスキップ後の映像回復に必要) |
 | ピクセルフォーマット | yuv420p | I420形式 |
 | 音声コーデック | AAC | AAC-LC (SPK Base構成のみ) |
 | 音声チャンネル | モノラル (-ac 1) | NS4168はモノラルスピーカー |

@@ -71,7 +71,7 @@ Core 1                                Core 0
 | 構造体/クラス | 内容 |
 |---|---|
 | `VideoInfo` | video_w/h, scaled_w/h, display_x/y |
-| `PipelineSync` | nal_queue, audio_queue, セマフォ, EOSフラグ, stop_requested |
+| `PipelineSync` | nal_queue, audio_queue, セマフォ, EOSフラグ, stop_requested, audio_volume |
 | `DoubleBuffer` | RGB565ダブルバッファ（PSRAM, swap/read/write） |
 | `AudioInfo` | sample_rate, channels, DSI |
 
@@ -83,9 +83,12 @@ Core 1                                Core 0
 
 ### 音声パイプライン (BOARD_HAS_AUDIO)
 - demux_taskが time-ordered interleaved demux でビデオ/オーディオフレームをPTS順に送信
-- audio_task: audio_queueからAACフレーム受信 → esp_audio_codec でPCMデコード → I2S DMA出力
+- audio_task: audio_queueからAACフレーム受信 → esp_audio_codec でPCMデコード → ボリュームスケーリング → I2S DMA出力
 - I2Sクロックが自然にリアルタイム再生速度を制御（バックプレッシャー）
 - ビデオはPTSベースのタイミング制御（既存）、両方リアルタイムクロックで近似同期
+- **ボリューム制御**: ソフトウェアPCMスケーリング `(sample * vol) >> 8`（固定小数点、vol: 0–256）
+  - Web UI slider → POST /api/volume → MediaController → Mp4Player → PipelineSync.audio_volume (volatile)
+  - 3パス最適化: vol==0→memset(0), vol<256→スケーリング, vol==256→no-op
 
 ### スケーリング (Nearest-Neighbor)
 - LCDより大きい動画はアスペクト比を維持して縮小表示（レターボックス/ピラーボックス）
@@ -109,14 +112,14 @@ Atom S3R では Display(SPI3_HOST) → SD(SPI2_HOST) の順で初期化すると
 - `src/psram_alloc.h` — PSRAM/内部RAM確保ヘルパー（`psram_alloc<T>()`, `psram_free()` 等）
 - `src/main.cpp` — SD→Display→WiFi→MediaController初期化、メインループ
 - `src/mp4_player.h` — namespace mp4: FrameMsg, AudioMsg, VideoInfo, PipelineSync, DoubleBuffer, AudioInfo, Stage/Pipeline クラス宣言, Mp4Player
-- `src/media_controller.h/cpp` — MediaController: PLAYLISTフォルダベースのプレイリスト管理、サブフォルダ選択、自動次再生、再生/停止/次/前/tick
+- `src/media_controller.h/cpp` — MediaController: playlistフォルダベースのプレイリスト管理、サブフォルダ選択、自動次再生、再生/停止/次/前/tick/音量
 - `src/wifi_file_server.h/cpp` — FileServer: WiFi AP + HTTP server + REST API + ファイル管理
 - `src/html_content.h` — Web UI SPA (HTML/CSS/JS、const char[] raw string literal)
 - `src/qr_display.h` — QRコード生成+LovyanGFX描画（espressif/qrcode、WiFi接続QR表示）
 - `src/demux_task.cpp` — DemuxStage クラス実装（SD I/O + MP4 demux + interleaved audio）
 - `src/decode_task.cpp` — DecodeStage クラス実装（H.264 decode + YUV→RGB565 + スケーリング）
 - `src/display_task.cpp` — DisplayStage クラス実装（pushImage DMA転送）
-- `src/audio_player.cpp` — AudioPipeline クラス実装（AAC decode + I2S output、BOARD_HAS_AUDIO時のみ）
+- `src/audio_player.cpp` — AudioPipeline クラス実装（AAC decode + ボリュームスケーリング + I2S output、BOARD_HAS_AUDIO時のみ）
 - `src/yuv2rgb.h` — namespace mp4: BT.601 YUV→RGB565変換（`yuv_to_rgb565()` 単一コア + scaled/unscaled API）
 - `platformio.ini` — マルチ環境設定（spotpear/atoms3r/atoms3r_spk、全環境3MB app partition）
 - `partitions_8MB.csv` — カスタムパーティション（3MB app + 残りdata）
@@ -144,7 +147,7 @@ rm -f sdkconfig.atoms3r_spk && rm -rf .pio/build/atoms3r_spk && pio run -e atoms
 **重要:** `sdkconfig.defaults.*` を変更した場合、生成された `sdkconfig.<env>` を削除しないと反映されない
 
 ## Test Video Preparation
-H.264 Baseline Profile 必須（SWデコーダ制限）。動画は `/sdcard/PLAYLIST/` フォルダに配置する。
+H.264 Baseline Profile 必須（SWデコーダ制限）。動画は `/sdcard/playlist/` フォルダに配置する。
 LCDより大きい動画はアスペクト比維持で自動縮小表示（最大対応 960x540）。高解像度はコマ落ちするため **320x240 推奨**。
 **`-g 15` 必須**: 15fpsで1秒ごとにキーフレーム挿入。音声付き再生時のフレームスキップ後の映像回復に必要。
 
@@ -175,10 +178,10 @@ ffmpeg -i input.mp4 -vf "scale=128:128,fps=15" -c:v libx264 -profile:v baseline 
 WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再生操作とファイル管理を行える。
 
 ### アーキテクチャ
-- **WiFi AP**: WPA2, SSID="MP4Player", Password="12345678" (常時ON)
-- **HTTP server**: `esp_http_server`、起動時に17個のURIハンドラ登録
-- **プレイリスト**: `/sdcard/PLAYLIST/` フォルダ内の .mp4 ファイルを順次再生。直下にmp4がない場合はサブフォルダを選択
-- **ハイブリッド起動**: WiFi起動 → PLAYLISTフォルダにmp4があれば自動再生 → ブラウザから操作可能
+- **WiFi AP**: WPA2, SSID="esp-mp4player", Password="12345678" (常時ON)
+- **HTTP server**: `esp_http_server`、起動時に20個のURIハンドラ登録
+- **プレイリスト**: `/sdcard/playlist/` フォルダ内の .mp4 ファイルを順次再生。直下にmp4がない場合はサブフォルダを選択
+- **ハイブリッド起動**: WiFi起動 → playlistフォルダにmp4があれば自動再生 → ブラウザから操作可能
 - **アップロード制限**: 再生中はアップロード不可（メモリ制約）
 - **LCD表示**: Idle時はWiFi接続QRコード + 接続情報を表示、再生中は動画表示
 
@@ -188,12 +191,13 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | GET | `/` | リダイレクト（localStorage設定でplayer or browseへ） |
 | GET | `/player` | プレイヤーページ |
 | GET | `/browse` | ファイルブラウザページ |
-| GET | `/api/status` | `{playing, file, index, total, folder}` |
+| GET | `/api/status` | `{playing, file, index, total, folder, sync_mode, volume}` |
 | GET | `/api/playlist` | `{folder, files:[], folders:[]}` |
 | POST | `/api/folder?name=xxx` | プレイリストフォルダ切替 |
 | POST | `/api/play?file=xxx` or `?index=N` | 再生開始 |
 | POST | `/api/stop` | 再生停止 |
 | POST | `/api/next` / `/api/prev` | 次/前の動画 |
+| POST | `/api/volume?vol=N` | 音量設定 (0–100) |
 | GET | `/download?file=/path` | ファイルダウンロード |
 | GET | `/preview?file=/path` | ファイルプレビュー |
 | POST | `/upload?path=/&filename=xxx` | アップロード（Raw POST body） |
