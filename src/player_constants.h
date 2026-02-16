@@ -54,11 +54,10 @@ constexpr int kSplashDelayMs       = 500;
 
 // --- SD card paths ---
 constexpr const char *kSdMountPoint = "/sdcard";
-constexpr const char *kPlaylistFolder = "/PLAYLIST";
-constexpr const char *kMp4FilePath  = "/sdcard/video.mp4";
+constexpr const char *kPlaylistFolder = "/playlist";
 
 // --- WiFi AP config ---
-constexpr const char *kApSsid       = "MP4Player";
+constexpr const char *kApSsid       = "esp-mp4player";
 constexpr const char *kApPassword   = "12345678";
 constexpr int kApChannel            = 1;
 constexpr int kApMaxConnections     = 2;
@@ -66,6 +65,6 @@ constexpr int kApMaxConnections     = 2;
 // --- HTTP server config ---
 constexpr size_t kHttpServerStack   = 8 * 1024;
 constexpr size_t kHttpScratchSize   = 8 * 1024;
-constexpr int kHttpMaxUriHandlers   = 19;
+constexpr int kHttpMaxUriHandlers   = 20;
 
 }  // namespace mp4

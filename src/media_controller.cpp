@@ -206,6 +206,7 @@ bool MediaController::play(int index)
 
     player_ = new Mp4Player(display_, path_buf);
     player_->set_audio_priority(audio_priority_);
+    player_->set_volume(volume_);
     player_->start();
     return true;
 }
@@ -227,6 +228,16 @@ void MediaController::stop()
         ESP_LOGI(TAG, "Stop requested");
         user_stopped_ = true;
         player_->request_stop();
+    }
+}
+
+void MediaController::set_volume(int vol)
+{
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    volume_ = vol;
+    if (player_) {
+        player_->set_volume(vol);
     }
 }
 

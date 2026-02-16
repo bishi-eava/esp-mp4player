@@ -35,6 +35,10 @@ public:
     void set_audio_priority(bool v) { audio_priority_ = v; }
     bool get_audio_priority() const { return audio_priority_; }
 
+    // Volume (0–100)
+    void set_volume(int vol);
+    int get_volume() const { return volume_; }
+
     // State
     bool is_playing() const;
     int current_index() const { return current_index_; }
@@ -55,6 +59,7 @@ private:
     int current_index_ = -1;
     bool audio_priority_ = true;
     bool user_stopped_ = false;
+    int volume_ = 100;
 
     Mp4Player *player_ = nullptr;
 };

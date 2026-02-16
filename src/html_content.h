@@ -139,6 +139,43 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     .player-ctrl-btn.play-btn:active {
       background: #e85050;
     }
+    .volume-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding: 0 8px;
+    }
+    .volume-icon {
+      font-size: 20px;
+      color: #868e96;
+      flex-shrink: 0;
+    }
+    .volume-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      background: #e9ecef;
+      border-radius: 3px;
+      outline: none;
+    }
+    .volume-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 22px;
+      height: 22px;
+      background: #ff6b6b;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    .volume-value {
+      font-size: 14px;
+      color: #495057;
+      font-weight: bold;
+      min-width: 36px;
+      text-align: right;
+    }
     .playlist-section {
       max-height: 400px;
       overflow-y: auto;
@@ -413,6 +450,11 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
       <button class="player-ctrl-btn play-btn" onclick="playerApi('/api/play')">&#x25B6;&#xFE0E;</button>
       <button class="player-ctrl-btn" onclick="playerApi('/api/next')">&#x23ED;&#xFE0E;</button>
     </div>
+    <div class="volume-row">
+      <span class="volume-icon">&#x1F509;</span>
+      <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="100">
+      <span class="volume-value" id="volumeValue">100</span>
+    </div>
     <div class="folder-selector" id="folderSelector" style="display:none">
       <p class="section-title">Folders</p>
       <div id="folderList"></div>
@@ -541,6 +583,20 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
       if (e.target === stopConfirmDialog) stopConfirmDialog.classList.remove('show');
     });
 
+    var volumeSlider = document.getElementById('volumeSlider');
+    var volumeValue = document.getElementById('volumeValue');
+    var volumeFromServer = true;
+
+    volumeSlider.addEventListener('input', function() {
+      volumeValue.textContent = volumeSlider.value;
+      volumeFromServer = false;
+      fetch('/api/volume?vol=' + volumeSlider.value, {method:'POST'}).catch(function(){});
+    });
+
+    volumeSlider.addEventListener('change', function() {
+      volumeFromServer = true;
+    });
+
     syncModeToggle.addEventListener('change', function() {
       var mode = syncModeToggle.checked ? 'audio' : 'video';
       syncModeLabel.textContent = syncModeToggle.checked ? 'Audio Priority' : 'Full Video';
@@ -564,6 +620,10 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         document.getElementById('playerStatusText').style.color = d.playing ? '#51cf66' : '#868e96';
         document.getElementById('playerFile').textContent = d.file || '-';
         if (d.sync_mode) updateSyncModeUI(d.sync_mode);
+        if (d.volume !== undefined && volumeFromServer) {
+          volumeSlider.value = d.volume;
+          volumeValue.textContent = d.volume;
+        }
         var items = document.querySelectorAll('.playlist-item');
         for (var i = 0; i < items.length; i++) {
           items[i].classList.toggle('current', items[i].dataset.idx == d.index && d.playing);

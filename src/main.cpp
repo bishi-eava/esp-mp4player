@@ -154,6 +154,9 @@ void Mp4Player::start()
 {
     sync_.init();
     sync_.audio_priority = audio_priority_;
+#ifdef BOARD_HAS_AUDIO
+    sync_.audio_volume = volume_ * 256 / 100;
+#endif
 
     auto *demux = new DemuxStage(filepath_, sync_, video_info_
 #ifdef BOARD_HAS_AUDIO

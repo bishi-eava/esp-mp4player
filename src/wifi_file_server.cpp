@@ -179,6 +179,7 @@ void FileServer::start_http_server()
     httpd_uri_t next_uri     = { .uri = "/api/next",     .method = HTTP_POST, .handler = next_handler,     .user_ctx = this };
     httpd_uri_t prev_uri     = { .uri = "/api/prev",     .method = HTTP_POST, .handler = prev_handler,     .user_ctx = this };
     httpd_uri_t syncmode_uri = { .uri = "/api/sync-mode", .method = HTTP_POST, .handler = sync_mode_handler, .user_ctx = this };
+    httpd_uri_t volume_uri   = { .uri = "/api/volume",    .method = HTTP_POST, .handler = volume_handler,    .user_ctx = this };
 
     httpd_register_uri_handler(server_, &status_uri);
     httpd_register_uri_handler(server_, &playlist_uri);
@@ -188,6 +189,7 @@ void FileServer::start_http_server()
     httpd_register_uri_handler(server_, &next_uri);
     httpd_register_uri_handler(server_, &prev_uri);
     httpd_register_uri_handler(server_, &syncmode_uri);
+    httpd_register_uri_handler(server_, &volume_uri);
 
     // File management endpoints (matching reference repo paths)
     httpd_uri_t download_uri = { .uri = "/download",     .method = HTTP_GET,  .handler = download_handler, .user_ctx = this };
@@ -413,13 +415,14 @@ esp_err_t FileServer::status_handler(httpd_req_t *req)
 
     char buf[512];
     snprintf(buf, sizeof(buf),
-             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\",\"sync_mode\":\"%s\"}",
+             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\",\"sync_mode\":\"%s\",\"volume\":%d}",
              ctrl.is_playing() ? "true" : "false",
              ctrl.current_file(),
              ctrl.current_index(),
              (int)ctrl.playlist().size(),
              ctrl.current_folder().c_str(),
-             ctrl.get_audio_priority() ? "audio" : "video");
+             ctrl.get_audio_priority() ? "audio" : "video",
+             ctrl.get_volume());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
@@ -555,6 +558,25 @@ esp_err_t FileServer::sync_mode_handler(httpd_req_t *req)
     char buf[64];
     snprintf(buf, sizeof(buf), "{\"sync_mode\":\"%s\"}",
              self->controller_.get_audio_priority() ? "audio" : "video");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+esp_err_t FileServer::volume_handler(httpd_req_t *req)
+{
+    auto *self = static_cast<FileServer *>(req->user_ctx);
+    char query[64] = "";
+    httpd_req_get_url_query_str(req, query, sizeof(query));
+
+    char vol_str[8] = "";
+    get_decoded_query_param(query, "vol", vol_str, sizeof(vol_str));
+
+    int vol = atoi(vol_str);
+    self->controller_.set_volume(vol);
+
+    httpd_resp_set_type(req, "application/json");
+    char buf[32];
+    snprintf(buf, sizeof(buf), "{\"volume\":%d}", self->controller_.get_volume());
     httpd_resp_sendstr(req, buf);
     return ESP_OK;
 }

@@ -33,6 +33,7 @@ private:
     static esp_err_t next_handler(httpd_req_t *req);
     static esp_err_t prev_handler(httpd_req_t *req);
     static esp_err_t sync_mode_handler(httpd_req_t *req);
+    static esp_err_t volume_handler(httpd_req_t *req);
 
     // File management handlers
     static esp_err_t download_handler(httpd_req_t *req);

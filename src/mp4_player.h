@@ -58,6 +58,7 @@ struct PipelineSync {
 #ifdef BOARD_HAS_AUDIO
     QueueHandle_t     audio_queue   = nullptr;
     volatile bool     audio_eos     = false;
+    volatile int      audio_volume  = 256;  // 0–256, 256=full volume
 #endif
 
     bool init() {
@@ -66,6 +67,7 @@ struct PipelineSync {
         audio_priority = false;
 #ifdef BOARD_HAS_AUDIO
         audio_eos      = false;
+        audio_volume   = 256;
 #endif
         nal_queue    = xQueueCreate(kNalQueueDepth, sizeof(FrameMsg));
         decode_ready = xSemaphoreCreateBinary();
@@ -226,6 +228,12 @@ public:
         : display_(display), filepath_(filepath) {}
 
     void set_audio_priority(bool v) { audio_priority_ = v; }
+    void set_volume(int vol) {
+        volume_ = vol;
+#ifdef BOARD_HAS_AUDIO
+        sync_.audio_volume = vol * 256 / 100;
+#endif
+    }
     void start();
     void request_stop();
     bool is_finished() const;
@@ -235,6 +243,7 @@ private:
     LGFX         &display_;
     const char   *filepath_;
     bool          audio_priority_ = true;
+    int           volume_ = 100;
 
     PipelineSync  sync_;
     VideoInfo     video_info_;

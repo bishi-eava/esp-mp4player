@@ -173,6 +173,19 @@ void AudioPipeline::run()
             }
 
             if (out_frame.decoded_size > 0) {
+                // Apply volume scaling
+                int vol = sync_.audio_volume;
+                if (vol == 0) {
+                    memset(pcm_buf, 0, out_frame.decoded_size);
+                } else if (vol < 256) {
+                    int16_t *samples = reinterpret_cast<int16_t *>(pcm_buf);
+                    int num_samples = out_frame.decoded_size / sizeof(int16_t);
+                    for (int i = 0; i < num_samples; i++) {
+                        samples[i] = (int16_t)((samples[i] * vol) >> 8);
+                    }
+                }
+                // vol==256: full volume, no scaling needed
+
                 size_t bytes_written = 0;
                 i2s_channel_write(tx_chan_, pcm_buf, out_frame.decoded_size,
                                   &bytes_written, portMAX_DELAY);
