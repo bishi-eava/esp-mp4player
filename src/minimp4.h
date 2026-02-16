@@ -273,6 +273,9 @@ typedef struct
     unsigned *duration;
 #endif
 
+    unsigned *sync_samples;     // stss: sync sample numbers (1-based), NULL if not present
+    unsigned sync_count;        // stss: number of sync samples (0 = all are sync)
+
 } MP4D_track_t;
 
 typedef struct MP4D_demux_tag
@@ -2612,6 +2615,7 @@ int MP4D_open(MP4D_demux_t *mp4, int (*read_callback)(int64_t offset, void *buff
             {BOX_stsc, 0, 1},
             {BOX_stco, 0, 1},
             {BOX_co64, 0, 1},
+            {BOX_stss, 0, 1},
             {BOX_stsd, 0, 0},
             {BOX_esds, 0, 1}    // esds does not use track, but switches to OD mode. Check here, to avoid OD check
         };
@@ -2836,6 +2840,15 @@ broken_android_meta_hack:
                         }
                     }
                 }
+            }
+            break;
+
+        case BOX_stss:  //ISO/IEC 14496-12 Section 8.6.2 - Sync Sample Box.
+            tr->sync_count = READ(4);
+            MALLOC(unsigned int*, tr->sync_samples, tr->sync_count * sizeof(unsigned));
+            for (i = 0; i < tr->sync_count; i++)
+            {
+                tr->sync_samples[i] = READ(4);  // 1-based sample number
             }
             break;
 
@@ -3293,6 +3306,7 @@ void MP4D_close(MP4D_demux_t *mp4)
         FREE(tr->timestamp);
         FREE(tr->duration);
 #endif
+        FREE(tr->sync_samples);
         FREE(tr->sample_to_chunk);
         FREE(tr->chunk_offset);
         FREE(tr->dsi);

@@ -146,6 +146,7 @@ public:
 private:
     void run();
     bool send_nal(const uint8_t *data, int size, int64_t pts_us, bool is_sps_pps);
+    bool send_video_frame(const uint8_t *data, int size, int64_t pts_us);
 #ifdef BOARD_HAS_AUDIO
     bool send_audio(const uint8_t *data, int size, int64_t pts_us);
 #endif

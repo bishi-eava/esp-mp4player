@@ -6,6 +6,8 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 
+#include "esp_timer.h"
+
 #include "mp4_player.h"
 #include "board_config.h"
 
@@ -20,6 +22,19 @@
 #undef realloc
 
 static const char *TAG = "demux";
+
+// Check if sample is a sync sample (keyframe/IDR).
+// sample_index is 0-based; stss entries are 1-based and sorted ascending.
+static bool is_sync_sample(const MP4D_track_t *tr, unsigned sample_index)
+{
+    if (tr->sync_count == 0) return true;  // no stss box = all frames are sync
+    unsigned one_based = sample_index + 1;
+    for (unsigned i = 0; i < tr->sync_count; i++) {
+        if (tr->sync_samples[i] == one_based) return true;
+        if (tr->sync_samples[i] > one_based) break;
+    }
+    return false;
+}
 
 namespace mp4 {
 
@@ -85,6 +100,29 @@ bool DemuxStage::send_nal(const uint8_t *data, int size, int64_t pts_us, bool is
 
     if (xQueueSend(sync_.nal_queue, &msg, pdMS_TO_TICKS(kQueueSendTimeoutMs)) != pdTRUE) {
         ESP_LOGE(TAG, "Queue send timeout");
+        psram_free(buf);
+        return false;
+    }
+    return true;
+}
+
+bool DemuxStage::send_video_frame(const uint8_t *data, int size, int64_t pts_us)
+{
+    uint8_t *buf = psram_alloc<uint8_t>(size);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to allocate %d bytes for video frame", size);
+        return false;
+    }
+    memcpy(buf, data, size);
+
+    FrameMsg msg = {};
+    msg.data = buf;
+    msg.size = size;
+    msg.pts_us = pts_us;
+    msg.is_sps_pps = false;
+    msg.eos = false;
+
+    if (xQueueSend(sync_.nal_queue, &msg, pdMS_TO_TICKS(kVideoSendTimeoutMs)) != pdTRUE) {
         psram_free(buf);
         return false;
     }
@@ -283,7 +321,17 @@ void DemuxStage::run()
         }
 
         unsigned total_frames = tr->sample_count;
-        ESP_LOGI(TAG, "Starting demux: %d video frames, timescale=%u", total_frames, timescale);
+        ESP_LOGI(TAG, "Starting demux: %d video frames, timescale=%u, sync_samples=%u",
+                 total_frames, timescale, tr->sync_count);
+        if (tr->sync_count > 0 && timescale > 0) {
+            for (unsigned i = 0; i < tr->sync_count; i++) {
+                unsigned sample_idx = tr->sync_samples[i] - 1;  // 1-based to 0-based
+                unsigned ts = 0, dur = 0, bytes = 0;
+                MP4D_frame_offset(&mp4, video_track, sample_idx, &bytes, &ts, &dur);
+                float pts_sec = (float)ts / timescale;
+                ESP_LOGI(TAG, "  Keyframe[%u]: sample=%u, pts=%.2fs", i, tr->sync_samples[i], pts_sec);
+            }
+        }
 
 #ifdef BOARD_HAS_AUDIO
         if (audio_track >= 0 && sync_.audio_queue) {
@@ -295,6 +343,8 @@ void DemuxStage::run()
 
             unsigned v_sample = 0;
             unsigned a_sample = 0;
+            unsigned v_skipped = 0;
+            int64_t demux_start_time = esp_timer_get_time();
 
             while (v_sample < total_frames || a_sample < total_audio_frames) {
                 if (sync_.stop_requested) {
@@ -322,6 +372,17 @@ void DemuxStage::run()
                                 (v_pts <= a_pts || a_sample >= total_audio_frames);
 
                 if (do_video) {
+                    // Wall-clock based skip: don't read from SD if video is behind schedule
+                    // Never skip sync samples (keyframes) — decoder needs them to recover
+                    if (v_pts > 0) {
+                        int64_t wall_us = esp_timer_get_time() - demux_start_time;
+                        if (wall_us - v_pts > kDemuxSkipThresholdUs &&
+                            !is_sync_sample(tr, v_sample)) {
+                            v_sample++;
+                            v_skipped++;
+                            continue;
+                        }
+                    }
                     if (v_bytes == 0 || v_bytes > kReadBufSize) {
                         v_sample++;
                         continue;
@@ -336,9 +397,10 @@ void DemuxStage::run()
                         v_sample++;
                         continue;
                     }
-                    if (!send_nal(nal_buf, nal_size, v_pts, false)) {
-                        ESP_LOGE(TAG, "Failed to send video frame %d", v_sample);
-                        break;
+                    if (!send_video_frame(nal_buf, nal_size, v_pts)) {
+                        v_sample++;
+                        v_skipped++;
+                        continue;
                     }
                     v_sample++;
                 } else {
@@ -357,9 +419,15 @@ void DemuxStage::run()
                     a_sample++;
                 }
             }
+            if (v_skipped > 0) {
+                ESP_LOGI(TAG, "Demux video frames skipped: %u / %u", v_skipped, total_frames);
+            }
         } else
 #endif
         {
+            unsigned v_skipped = 0;
+            int64_t demux_start_time = esp_timer_get_time();
+
             for (unsigned sample = 0; sample < total_frames; sample++) {
                 if (sync_.stop_requested) {
                     ESP_LOGI(TAG, "Stop requested, ending demux early");
@@ -371,6 +439,19 @@ void DemuxStage::run()
 
                 MP4D_file_offset_t offset = MP4D_frame_offset(&mp4, video_track, sample,
                                                                &frame_bytes, &timestamp, &duration);
+
+                int64_t pts_us = (timescale > 0) ? (int64_t)timestamp * 1000000LL / timescale : 0;
+
+                // Wall-clock based skip: don't read from SD if video is behind schedule
+                // Never skip sync samples (keyframes)
+                if (pts_us > 0) {
+                    int64_t wall_us = esp_timer_get_time() - demux_start_time;
+                    if (wall_us - pts_us > kDemuxSkipThresholdUs &&
+                        !is_sync_sample(tr, sample)) {
+                        v_skipped++;
+                        continue;
+                    }
+                }
 
                 if (frame_bytes == 0 || frame_bytes > kReadBufSize) {
                     ESP_LOGW(TAG, "Frame %d: invalid size %d, skipping", sample, frame_bytes);
@@ -389,12 +470,13 @@ void DemuxStage::run()
                     continue;
                 }
 
-                int64_t pts_us = (timescale > 0) ? (int64_t)timestamp * 1000000LL / timescale : 0;
-
-                if (!send_nal(nal_buf, nal_size, pts_us, false)) {
-                    ESP_LOGE(TAG, "Failed to send frame %d", sample);
-                    break;
+                if (!send_video_frame(nal_buf, nal_size, pts_us)) {
+                    v_skipped++;
+                    continue;
                 }
+            }
+            if (v_skipped > 0) {
+                ESP_LOGI(TAG, "Demux video frames skipped: %u / %u", v_skipped, total_frames);
             }
         }
 

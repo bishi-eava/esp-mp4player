@@ -22,6 +22,9 @@ CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 # --- CPU ---
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
+# --- FreeRTOS tick rate (1ms tick for precise PTS timing) ---
+CONFIG_FREERTOS_HZ=1000
+
 # --- Main task stack (H.264 decoder needs more stack) ---
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 

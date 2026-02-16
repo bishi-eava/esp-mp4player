@@ -17,7 +17,7 @@ constexpr int kDisplayPriority = 6;
 constexpr int kAudioPriority   = 7;
 
 // --- Core affinity ---
-constexpr int kDemuxCore   = 1;
+constexpr int kDemuxCore   = 0;
 constexpr int kDecodeCore  = 1;
 constexpr int kDisplayCore = 0;
 constexpr int kAudioCore   = 0;
@@ -41,8 +41,12 @@ constexpr int kI2sDmaFrameNum = 512;
 
 // --- Timeout durations (ms) ---
 constexpr int kQueueSendTimeoutMs  = 5000;
+constexpr int kVideoSendTimeoutMs  = 0;     // demux: non-blocking video send (skip if queue full)
 constexpr int kQueueRecvTimeoutMs  = 10000;
 constexpr int kAudioRecvTimeoutMs  = 5000;
+
+// --- Frame skip (A/V sync) ---
+constexpr int64_t kDemuxSkipThresholdUs = 200000;  // demux: skip SD read if >200ms behind wall clock
 constexpr int kSemaphoreTimeoutMs  = 10000;
 constexpr int kFinalDisplayWaitMs  = 1000;
 constexpr int kBootDelayMs         = 5000;
