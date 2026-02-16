@@ -5,6 +5,8 @@
 #include "board_config.h"
 #include "lcd_config.h"
 #include "mp4_player.h"
+#include "media_controller.h"
+#include "wifi_file_server.h"
 
 #ifdef BOARD_SD_MODE_SDMMC
 #include "driver/sdmmc_host.h"
@@ -122,11 +124,26 @@ extern "C" void app_main(void)
         return;
     }
 
-    display.println("Playing video...");
-    vTaskDelay(pdMS_TO_TICKS(mp4::kSplashDelayMs));
+    // MediaController manages playlist and playback lifecycle
+    static mp4::MediaController controller(display);
 
-    static mp4::Mp4Player player(display, mp4::kMp4FilePath);
-    player.start();
+    // WiFi AP + HTTP server (always on)
+    static mp4::FileServer server(display, controller);
+    server.start();
+
+    // Scan and auto-play
+    controller.scan_playlist();
+
+    if (!controller.playlist().empty()) {
+        vTaskDelay(pdMS_TO_TICKS(mp4::kSplashDelayMs));
+        controller.play(0);
+    }
+
+    // Main loop: detect playback completion
+    while (true) {
+        controller.tick();
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 }
 
 // --- Mp4Player implementation ---
@@ -145,13 +162,42 @@ void Mp4Player::start()
     auto *decode  = new DecodeStage(sync_, video_info_, dbuf_);
     auto *disp    = new DisplayStage(sync_, video_info_, dbuf_, display_);
 
-    xTaskCreatePinnedToCore(DecodeStage::task_func,  "decode",  kDecodeStackSize,  decode,  kDecodePriority,  nullptr, kDecodeCore);
-    xTaskCreatePinnedToCore(DisplayStage::task_func, "display", kDisplayStackSize, disp,    kDisplayPriority, nullptr, kDisplayCore);
-    xTaskCreatePinnedToCore(DemuxStage::task_func,   "demux",   kDemuxStackSize,   demux,   kDemuxPriority,   nullptr, kDemuxCore);
+    xTaskCreatePinnedToCore(DecodeStage::task_func,  "decode",  kDecodeStackSize,  decode,  kDecodePriority,  &decode_handle_,  kDecodeCore);
+    xTaskCreatePinnedToCore(DisplayStage::task_func, "display", kDisplayStackSize, disp,    kDisplayPriority, &display_handle_, kDisplayCore);
+    xTaskCreatePinnedToCore(DemuxStage::task_func,   "demux",   kDemuxStackSize,   demux,   kDemuxPriority,   &demux_handle_,   kDemuxCore);
 
 #ifdef BOARD_HAS_AUDIO
     auto *audio = new AudioPipeline(sync_, audio_info_);
-    xTaskCreatePinnedToCore(AudioPipeline::task_func, "audio", kAudioStackSize, audio, kAudioPriority, nullptr, kAudioCore);
+    xTaskCreatePinnedToCore(AudioPipeline::task_func, "audio", kAudioStackSize, audio, kAudioPriority, &audio_handle_, kAudioCore);
+#endif
+}
+
+void Mp4Player::request_stop()
+{
+    sync_.stop_requested = true;
+}
+
+bool Mp4Player::is_finished() const
+{
+    return sync_.pipeline_eos;
+}
+
+void Mp4Player::wait_until_finished()
+{
+    // Wait for all tasks to self-delete by polling task state
+    while (!sync_.pipeline_eos) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    // Give tasks time to fully exit after setting EOS
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    // Clean up pipeline resources for reuse
+    sync_.deinit();
+    demux_handle_   = nullptr;
+    decode_handle_  = nullptr;
+    display_handle_ = nullptr;
+#ifdef BOARD_HAS_AUDIO
+    audio_handle_   = nullptr;
 #endif
 }
 

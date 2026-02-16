@@ -5,5 +5,7 @@ dependencies:
     version: "*"
   espressif/esp_audio_codec:
     version: "^2.4.0"
+  espressif/qrcode:
+    version: "*"
   lovyanGFX:
     git: https://github.com/lovyan03/LovyanGFX.git

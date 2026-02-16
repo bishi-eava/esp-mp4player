@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "board_config.h"
@@ -51,6 +52,7 @@ struct PipelineSync {
     SemaphoreHandle_t decode_ready  = nullptr;
     SemaphoreHandle_t display_done  = nullptr;
     volatile bool     pipeline_eos  = false;
+    volatile bool     stop_requested = false;
 
 #ifdef BOARD_HAS_AUDIO
     QueueHandle_t     audio_queue   = nullptr;
@@ -58,6 +60,11 @@ struct PipelineSync {
 #endif
 
     bool init() {
+        pipeline_eos   = false;
+        stop_requested = false;
+#ifdef BOARD_HAS_AUDIO
+        audio_eos      = false;
+#endif
         nal_queue    = xQueueCreate(kNalQueueDepth, sizeof(FrameMsg));
         decode_ready = xSemaphoreCreateBinary();
         display_done = xSemaphoreCreateBinary();
@@ -65,6 +72,15 @@ struct PipelineSync {
         audio_queue  = xQueueCreate(kAudioQueueDepth, sizeof(AudioMsg));
 #endif
         return nal_queue && decode_ready && display_done;
+    }
+
+    void deinit() {
+        if (nal_queue)    { vQueueDelete(nal_queue);       nal_queue    = nullptr; }
+        if (decode_ready) { vSemaphoreDelete(decode_ready); decode_ready = nullptr; }
+        if (display_done) { vSemaphoreDelete(display_done); display_done = nullptr; }
+#ifdef BOARD_HAS_AUDIO
+        if (audio_queue)  { vQueueDelete(audio_queue);     audio_queue  = nullptr; }
+#endif
     }
 };
 
@@ -207,6 +223,9 @@ public:
         : display_(display), filepath_(filepath) {}
 
     void start();
+    void request_stop();
+    bool is_finished() const;
+    void wait_until_finished();
 
 private:
     LGFX         &display_;
@@ -217,6 +236,13 @@ private:
     DoubleBuffer  dbuf_;
 #ifdef BOARD_HAS_AUDIO
     AudioInfo     audio_info_;
+#endif
+
+    TaskHandle_t  demux_handle_   = nullptr;
+    TaskHandle_t  decode_handle_  = nullptr;
+    TaskHandle_t  display_handle_ = nullptr;
+#ifdef BOARD_HAS_AUDIO
+    TaskHandle_t  audio_handle_   = nullptr;
 #endif
 };
 

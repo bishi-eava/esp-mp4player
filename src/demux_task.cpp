@@ -297,6 +297,10 @@ void DemuxStage::run()
             unsigned a_sample = 0;
 
             while (v_sample < total_frames || a_sample < total_audio_frames) {
+                if (sync_.stop_requested) {
+                    ESP_LOGI(TAG, "Stop requested, ending demux early");
+                    break;
+                }
                 int64_t v_pts = INT64_MAX;
                 int64_t a_pts = INT64_MAX;
                 unsigned v_bytes = 0, v_ts = 0, v_dur = 0;
@@ -357,6 +361,10 @@ void DemuxStage::run()
 #endif
         {
             for (unsigned sample = 0; sample < total_frames; sample++) {
+                if (sync_.stop_requested) {
+                    ESP_LOGI(TAG, "Stop requested, ending demux early");
+                    break;
+                }
                 unsigned frame_bytes = 0;
                 unsigned timestamp = 0;
                 unsigned duration = 0;
