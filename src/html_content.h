@@ -2,403 +2,1259 @@
 
 namespace mp4 {
 
-const char kIndexHtml[] = R"rawliteral(
+// SSR HTML template for file browser page.
+// Markers (replaced by browse_handler via chunked response):
+//   <!--BACK_BTN-->       back button HTML (empty string or <a> tag)
+//   <!--PATH_DISPLAY-->   current path text (e.g. "/ folder / sub")
+//   <!--FILE_LIST-->      file listing HTML (<ul>...</ul> or <p>)
+//   __JSPATH__            raw path for JavaScript (e.g. /folder)
+
+const char HTML_TEMPLATE[] = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MP4 Player</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;font-size:16px;line-height:1.5}
-.hdr{background:#16213e;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0f3460}
-.hdr h1{color:#e94560;font-size:20px}
-.tabs{display:flex;gap:6px}
-.tab{background:#0f3460;color:#ccc;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold}
-.tab.act{background:#e94560;color:#fff}
-.cnt{padding:16px;max-width:600px;margin:0 auto}
-.vw{display:none}.vw.act{display:block}
-.st-bar{background:#16213e;border-radius:12px;padding:14px 16px;margin-bottom:16px;text-align:center}
-.st-txt{font-size:13px;color:#aaa}.st-file{font-size:18px;font-weight:bold;color:#e94560;margin-top:4px;word-break:break-all}
-.ctrls{display:flex;justify-content:center;gap:12px;margin-bottom:16px}
-.cb{background:#0f3460;color:#fff;border:none;width:52px;height:52px;border-radius:50%;cursor:pointer;font-size:22px;display:flex;align-items:center;justify-content:center;transition:background .15s}
-.cb:active{transform:scale(.93);background:#e94560}
-.cb.pl{background:#e94560;width:60px;height:60px;font-size:26px}
-.cb.pl:active{background:#c0392b}
-.pl-item{background:#16213e;border-radius:10px;padding:12px 16px;margin:8px 0;display:flex;align-items:center;cursor:pointer;transition:background .1s}
-.pl-item:active{background:#0f3460}
-.pl-item.cur{border-left:4px solid #e94560}
-.pl-item .nm{flex:1;word-break:break-all;font-size:15px}
-.pl-item .ic{color:#e94560;font-size:18px;margin-left:8px}
-.sec-title{font-size:13px;color:#888;text-transform:uppercase;letter-spacing:1px;margin:20px 0 8px;padding-left:4px}
-.nr{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
-.nb{background:#0f3460;color:#e0e0e0;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;white-space:nowrap}
-.nb:active{background:#e94560}
-.nb.up{background:#28a745}.nb.up:active{background:#218838}
-.nb.nf{background:#fd7e14}.nb.nf:active{background:#e8650e}
-.pt{color:#aaa;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ua{border:2px dashed #0f3460;border-radius:12px;padding:24px 16px;text-align:center;margin-bottom:16px;display:none;background:#16213e}
-.ua.sh{display:block}.ua.dg{border-color:#28a745;background:#1a2e1a}
-.ua p{color:#aaa;margin-bottom:12px;font-size:14px}
-.ub{background:#0f3460;color:#fff;border:none;padding:12px 24px;border-radius:10px;cursor:pointer;font-size:15px;font-weight:bold}
-.pw{display:none;margin-top:12px;align-items:center;gap:8px}.pw.sh{display:flex}
-.pbg{flex:1;background:#0f3460;border-radius:8px;overflow:hidden;height:20px}
-.pb{height:100%;background:linear-gradient(90deg,#28a745,#20c997);border-radius:8px;transition:width .1s;display:flex;align-items:center;justify-content:center;min-width:32px}
-.ppct{color:#fff;font-size:11px;font-weight:bold}
-.us{margin-top:8px;font-size:13px;color:#28a745}
-.fi{background:#16213e;border-radius:10px;padding:12px 16px;margin:8px 0;cursor:pointer;display:flex;align-items:center;transition:background .1s}
-.fi:active{background:#0f3460}
-.fi.dr{border-left:3px solid #fd7e14}
-.fn{flex:1;word-break:break-all;font-size:15px}
-.fs{color:#aaa;font-size:12px;margin-left:8px;white-space:nowrap}
-.fic{margin-right:8px;font-size:14px}
-.ov{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:100}
-.ov.sh{display:flex;justify-content:center;align-items:center;padding:16px}
-.dlg{background:#16213e;padding:24px;border-radius:16px;width:100%;max-width:320px;text-align:center}
-.dlg h3{color:#e0e0e0;margin-bottom:20px;font-size:17px;word-break:break-all}
-.dbs{display:flex;flex-direction:column;gap:10px}
-.db{padding:13px;border:none;border-radius:10px;cursor:pointer;font-size:15px;font-weight:bold;color:#fff}
-.db:active{transform:scale(.98)}
-.db-dl{background:#4dabf7}.db-del{background:#e94560}.db-ren{background:#fd7e14}
-.db-pl{background:#28a745}.db-x{background:#495057;color:#ccc}.db-sv{background:#28a745}
-.di{width:100%;padding:12px;font-size:15px;border:2px solid #0f3460;border-radius:8px;margin-bottom:16px;background:#1a1a2e;color:#e0e0e0}
-.di:focus{outline:none;border-color:#e94560}
-.sr{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #0f3460;text-align:left}
-.sr:last-child{border-bottom:none}
-.sl{color:#aaa;font-size:13px}.sv{color:#e0e0e0;font-weight:bold;font-size:13px}
-.ld{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(26,26,46,.9);z-index:200;justify-content:center;align-items:center;flex-direction:column}
-.ld.sh{display:flex}
-.sp{width:40px;height:40px;border:4px solid #0f3460;border-top:4px solid #e94560;border-radius:50%;animation:spin 1s linear infinite}
-@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
-.lt{color:#aaa;margin-top:12px;font-size:14px}
-.em{text-align:center;color:#666;padding:32px;font-size:14px}
-.cb-x{background:#ff6b6b;color:#fff;border:none;width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:12px;font-weight:bold;line-height:1;padding:0}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MP4 Player</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f5f5f5;
+      color: #333;
+      font-size: 18px;
+      line-height: 1.5;
+    }
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 0 0 16px 0;
+      padding-bottom: 12px;
+      border-bottom: 3px solid #ff6b6b;
+    }
+    h1 {
+      color: #ff6b6b;
+      font-size: 24px;
+      margin: 0;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    li {
+      padding: 16px;
+      margin: 12px 0;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    a {
+      color: #4dabf7;
+      text-decoration: none;
+      font-size: 18px;
+      display: block;
+    }
+    li.dir {
+      position: relative;
+    }
+    .dir a {
+      color: #ffa94d;
+      font-weight: bold;
+      padding-right: 32px;
+    }
+    .folder-edit-btn {
+      position: absolute;
+      right: 12px;
+      top: 12px;
+      background: none;
+      border: none;
+      font-size: 22px;
+      color: #868e96;
+      cursor: pointer;
+      padding: 4px 8px;
+      display: none;
+    }
+    .new-folder-btn {
+      background: #ffa94d;
+      color: #fff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      white-space: nowrap;
+      display: none;
+      margin-left: auto;
+    }
+    .new-folder-btn:active {
+      transform: scale(0.98);
+    }
+    .nav-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 12px 0 16px 0;
+    }
+    .back-btn {
+      display: inline-block;
+      background: #e9ecef;
+      color: #495057;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .back-btn:active {
+      transform: scale(0.98);
+      background: #dee2e6;
+    }
+    .path {
+      color: #495057;
+      font-size: 16px;
+      padding: 0;
+      margin: 0;
+      background: none;
+    }
+    .error {
+      color: #fa5252;
+      font-weight: bold;
+    }
+    .upload-toggle {
+      background: #51cf66;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+      box-shadow: 0 4px 12px rgba(81,207,102,0.3);
+      white-space: nowrap;
+    }
+    .upload-toggle:active {
+      transform: scale(0.98);
+    }
+    .upload-area {
+      border: 3px dashed #adb5bd;
+      border-radius: 16px;
+      padding: 32px 16px;
+      text-align: center;
+      margin: 16px 0;
+      background: #fff;
+      display: none;
+    }
+    .upload-area.show {
+      display: block;
+    }
+    .upload-area.dragover {
+      background: #e8f5e9;
+      border-color: #51cf66;
+    }
+    .upload-area p {
+      font-size: 16px;
+      color: #868e96;
+      margin: 0 0 16px 0;
+    }
+    .upload-btn {
+      background: #4dabf7;
+      color: #fff;
+      border: none;
+      padding: 16px 32px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 18px;
+      font-weight: bold;
+      box-shadow: 0 4px 12px rgba(77,171,247,0.3);
+    }
+    .upload-btn:active {
+      transform: scale(0.98);
+    }
+    #fileInput {
+      display: none;
+    }
+    .upload-status {
+      margin-top: 16px;
+      color: #51cf66;
+      font-weight: bold;
+    }
+    .progress-wrapper {
+      display: none;
+      margin-top: 16px;
+      align-items: center;
+      gap: 8px;
+    }
+    .progress-wrapper.show {
+      display: flex;
+    }
+    .progress-container {
+      flex: 1;
+      background: #e9ecef;
+      border-radius: 8px;
+      overflow: hidden;
+      height: 24px;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #51cf66, #40c057);
+      border-radius: 8px;
+      transition: width 0.1s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+    }
+    .progress-text {
+      color: #fff;
+      font-size: 12px;
+      font-weight: bold;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    .cancel-btn {
+      background: #ff6b6b;
+      color: #fff;
+      border: none;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      line-height: 1;
+      padding: 0;
+    }
+    .cancel-btn:active {
+      transform: scale(0.95);
+    }
+    .file-info {
+      color: #868e96;
+      font-size: 14px;
+      margin-top: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .file-date {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .dialog-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+    }
+    .dialog-overlay.show {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+    }
+    .dialog {
+      background: #fff;
+      padding: 24px;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 320px;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .dialog h3 {
+      margin: 0 0 24px 0;
+      color: #333;
+      font-size: 18px;
+      word-break: break-all;
+    }
+    .dialog-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .dialog-btn {
+      padding: 16px 24px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 18px;
+      font-weight: bold;
+    }
+    .dialog-btn:active {
+      transform: scale(0.98);
+    }
+    .btn-download {
+      background: #4dabf7;
+      color: #fff;
+    }
+    .btn-delete {
+      background: #ff6b6b;
+      color: #fff;
+    }
+    .btn-preview {
+      background: #9775fa;
+      color: #fff;
+    }
+    .btn-rename {
+      background: #ffa94d;
+      color: #fff;
+    }
+    .btn-cancel {
+      background: #e9ecef;
+      color: #495057;
+    }
+    .btn-save {
+      background: #51cf66;
+      color: #fff;
+    }
+    .preview-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 300;
+      flex-direction: column;
+    }
+    .preview-overlay.show {
+      display: flex;
+    }
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: rgba(0,0,0,0.3);
+    }
+    .preview-title {
+      color: #fff;
+      font-size: 14px;
+      word-break: break-all;
+      margin-right: 12px;
+    }
+    .preview-close {
+      background: #ff6b6b;
+      color: #fff;
+      border: none;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 18px;
+      font-weight: bold;
+      flex-shrink: 0;
+    }
+    .preview-body {
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+    }
+    .preview-body img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+    .preview-body pre {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.5;
+      overflow: auto;
+      max-width: 100%;
+      max-height: 100%;
+      width: 100%;
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+      align-self: flex-start;
+    }
+    .rename-input {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+    .rename-input:focus {
+      outline: none;
+      border-color: #ffa94d;
+    }
+    .settings-btn {
+      background: #868e96;
+      color: #fff;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    .settings-btn:active {
+      transform: scale(0.98);
+    }
+    .settings-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #e9ecef;
+      text-align: left;
+    }
+    .settings-row:last-child {
+      border-bottom: none;
+    }
+    .settings-label {
+      font-size: 14px;
+      color: #495057;
+    }
+    .settings-value {
+      font-size: 14px;
+      color: #333;
+      font-weight: bold;
+    }
+    .settings-input {
+      width: 80px;
+      padding: 8px 12px;
+      font-size: 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      text-align: right;
+    }
+    .settings-input:focus {
+      outline: none;
+      border-color: #4dabf7;
+    }
+    .header-buttons {
+      display: flex;
+      gap: 8px;
+    }
+    .toggle-switch {
+      position: relative;
+      width: 50px;
+      height: 28px;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #e9ecef;
+      border-radius: 28px;
+      transition: 0.2s;
+    }
+    .toggle-slider::before {
+      position: absolute;
+      content: "";
+      height: 22px;
+      width: 22px;
+      left: 3px;
+      bottom: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: 0.2s;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .toggle-switch input:checked + .toggle-slider {
+      background: #ff6b6b;
+    }
+    .toggle-switch input:checked + .toggle-slider::before {
+      transform: translateX(22px);
+    }
+    .loading-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.8);
+      z-index: 200;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+    }
+    .loading-overlay.show {
+      display: flex;
+    }
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid #e9ecef;
+      border-top: 4px solid #ff6b6b;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .loading-text {
+      margin-top: 16px;
+      color: #495057;
+      font-size: 16px;
+    }
+    .player-btn {
+      background: #4dabf7;
+      color: #fff;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    .player-btn:active {
+      transform: scale(0.98);
+    }
+    .player-status {
+      text-align: center;
+      padding: 8px 0 12px;
+    }
+    .player-status-text {
+      font-size: 14px;
+      color: #868e96;
+    }
+    .player-file {
+      font-size: 16px;
+      font-weight: bold;
+      color: #ff6b6b;
+      margin-top: 4px;
+      word-break: break-all;
+    }
+    .player-controls {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .player-ctrl-btn {
+      background: #e9ecef;
+      border: none;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .player-ctrl-btn:active {
+      background: #ff6b6b;
+      color: #fff;
+    }
+    .player-ctrl-btn.play-btn {
+      background: #ff6b6b;
+      color: #fff;
+      width: 56px;
+      height: 56px;
+      font-size: 24px;
+    }
+    .player-ctrl-btn.play-btn:active {
+      background: #e85050;
+    }
+    .playlist-section {
+      max-height: 250px;
+      overflow-y: auto;
+      text-align: left;
+    }
+    .playlist-item {
+      padding: 10px 12px;
+      margin: 4px 0;
+      background: #f8f9fa;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+    }
+    .playlist-item:active {
+      background: #e9ecef;
+    }
+    .playlist-item.current {
+      border-left: 3px solid #ff6b6b;
+      font-weight: bold;
+    }
+    .playlist-item .pl-name {
+      flex: 1;
+      word-break: break-all;
+    }
+    .playlist-item .pl-icon {
+      color: #ff6b6b;
+      margin-left: 8px;
+    }
+  </style>
 </head>
 <body>
-<div class="hdr">
-<h1>MP4 Player</h1>
-<div class="tabs">
-<button class="tab act" onclick="showTab('player')">Player</button>
-<button class="tab" onclick="showTab('files')">Files</button>
-<button class="tab" onclick="showSettings()">Info</button>
-</div>
-</div>
-<div class="cnt">
-<div id="vPlayer" class="vw act">
-<div class="st-bar">
-<div class="st-txt" id="stTxt">Loading...</div>
-<div class="st-file" id="stFile">-</div>
-</div>
-<div class="ctrls">
-<button class="cb" onclick="api('/api/prev')">&#x23EE;</button>
-<button class="cb" onclick="api('/api/stop')">&#x23F9;</button>
-<button class="cb pl" onclick="api('/api/play')">&#x25B6;</button>
-<button class="cb" onclick="api('/api/next')">&#x23ED;</button>
-</div>
-<div class="sec-title">Playlist</div>
-<div id="playlist"></div>
-</div>
-<div id="vFiles" class="vw">
-<div class="nr">
-<button class="nb" id="backBtn" onclick="goBack()">&#x2190; Back</button>
-<span class="pt" id="pathTxt">/</span>
-<button class="nb nf" onclick="showNF()">+ Folder</button>
-<button class="nb up" onclick="toggleUp()">Upload</button>
-</div>
-<div class="ua" id="upArea">
-<p>Drop files here or tap to select</p>
-<input type="file" id="fInput" multiple style="display:none">
-<button class="ub" onclick="document.getElementById('fInput').click()">Choose Files</button>
-<div class="pw" id="pWrap">
-<div class="pbg"><div class="pb" id="pBar"><span class="ppct" id="pPct">0%</span></div></div>
-<button class="cb-x" id="pCancel">&#x2715;</button>
-</div>
-<div class="us" id="upSt"></div>
-</div>
-<div id="fileList"></div>
-</div>
-</div>
-<div class="ov" id="fileDlg" onclick="if(event.target===this)closeDlg('fileDlg')">
-<div class="dlg">
-<h3 id="fdName"></h3>
-<div class="dbs">
-<button class="db db-pl" id="fdPlay" onclick="playFromDlg()">&#x25B6; Play</button>
-<button class="db db-dl" onclick="dlFile()">Download</button>
-<button class="db db-ren" onclick="showRen()">Rename</button>
-<button class="db db-del" onclick="delItem()">Delete</button>
-<button class="db db-x" onclick="closeDlg('fileDlg')">Cancel</button>
-</div>
-</div>
-</div>
-<div class="ov" id="folderDlg" onclick="if(event.target===this)closeDlg('folderDlg')">
-<div class="dlg">
-<h3 id="foDlgName"></h3>
-<div class="dbs">
-<button class="db db-ren" onclick="showRen()">Rename</button>
-<button class="db db-del" onclick="delItem()">Delete</button>
-<button class="db db-x" onclick="closeDlg('folderDlg')">Cancel</button>
-</div>
-</div>
-</div>
-<div class="ov" id="renDlg" onclick="if(event.target===this)closeDlg('renDlg')">
-<div class="dlg">
-<h3>Rename</h3>
-<input type="text" class="di" id="renIn">
-<div class="dbs">
-<button class="db db-sv" onclick="doRename()">Save</button>
-<button class="db db-x" onclick="closeDlg('renDlg')">Cancel</button>
-</div>
-</div>
-</div>
-<div class="ov" id="nfDlg" onclick="if(event.target===this)closeDlg('nfDlg')">
-<div class="dlg">
-<h3>New Folder</h3>
-<input type="text" class="di" id="nfIn" placeholder="Folder name">
-<div class="dbs">
-<button class="db db-sv" onclick="doNF()">Create</button>
-<button class="db db-x" onclick="closeDlg('nfDlg')">Cancel</button>
-</div>
-</div>
-</div>
-<div class="ov" id="setDlg" onclick="if(event.target===this)closeDlg('setDlg')">
-<div class="dlg">
-<h3>Storage Info</h3>
-<div class="sr"><span class="sl">Total</span><span class="sv" id="sdTot">-</span></div>
-<div class="sr"><span class="sl">Used</span><span class="sv" id="sdUsd">-</span></div>
-<div class="sr"><span class="sl">Free</span><span class="sv" id="sdFre">-</span></div>
-<div class="dbs" style="margin-top:16px">
-<button class="db db-x" onclick="closeDlg('setDlg')">Close</button>
-</div>
-</div>
-</div>
-<div class="ld" id="loading">
-<div class="sp"></div>
-<div class="lt">Loading...</div>
-</div>
-<script>
-var cp='/',selP='',selN='',selD=false,curXhr=null,upCancelled=false;
-function $(id){return document.getElementById(id)}
-function fmt(b){
-if(b<1024)return b+' B';
-if(b<1048576)return(b/1024).toFixed(1)+' KB';
-if(b<1073741824)return(b/1048576).toFixed(1)+' MB';
-return(b/1073741824).toFixed(2)+' GB';
-}
-function showTab(t){
-var tabs=document.querySelectorAll('.tab');
-tabs[0].classList.toggle('act',t==='player');
-tabs[1].classList.toggle('act',t==='files');
-$('vPlayer').classList.toggle('act',t==='player');
-$('vFiles').classList.toggle('act',t==='files');
-if(t==='player'){loadSt();loadPL();}
-if(t==='files')loadDir(cp);
-}
-function closeDlg(id){$(id).classList.remove('sh')}
-function showSettings(){
-$('setDlg').classList.add('sh');
-fetch('/api/storage').then(function(r){return r.json()}).then(function(d){
-$('sdTot').textContent=fmt(d.total);
-$('sdUsd').textContent=fmt(d.used);
-$('sdFre').textContent=fmt(d.free);
-}).catch(function(){});
-}
-function api(url){
-return fetch(url,{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-setTimeout(loadSt,300);return d;
-}).catch(function(){});
-}
-function loadSt(){
-fetch('/api/status').then(function(r){return r.json()}).then(function(d){
-$('stTxt').textContent=d.playing?'Playing...':'Stopped';
-$('stFile').textContent=d.file||'-';
-$('stTxt').style.color=d.playing?'#28a745':'#aaa';
-var items=document.querySelectorAll('.pl-item');
-for(var i=0;i<items.length;i++){
-items[i].classList.toggle('cur',items[i].dataset.idx==d.index&&d.playing);
-}
-}).catch(function(){$('stTxt').textContent='Connection error';$('stTxt').style.color='#e94560'});
-}
-function loadPL(){
-fetch('/api/playlist').then(function(r){return r.json()}).then(function(list){
-var h='';
-if(list.length===0)h='<div class="em">No MP4 files found on SD card</div>';
-for(var i=0;i<list.length;i++){
-h+='<div class="pl-item" data-idx="'+i+'" onclick="playIdx('+i+')">';
-h+='<span class="nm">'+esc(list[i])+'</span>';
-h+='<span class="ic">&#x25B6;</span></div>';
-}
-$('playlist').innerHTML=h;
-loadSt();
-}).catch(function(){$('playlist').innerHTML='<div class="em">Failed to load playlist</div>'});
-}
-function playIdx(i){
-fetch('/api/play?index='+i,{method:'POST'}).then(function(r){return r.json()}).then(function(){
-setTimeout(loadSt,500);
-});
-}
-function esc(s){
-var d=document.createElement('div');d.textContent=s;return d.innerHTML;
-}
-function loadDir(path){
-cp=path;
-$('pathTxt').textContent=path;
-$('backBtn').style.display=path==='/'?'none':'inline-block';
-fetch('/api/files?path='+encodeURIComponent(path)).then(function(r){return r.json()}).then(function(files){
-files.sort(function(a,b){
-if(a.dir!==b.dir)return a.dir?-1:1;
-return a.name.localeCompare(b.name);
-});
-var h='';
-if(files.length===0)h='<div class="em">Empty directory</div>';
-for(var i=0;i<files.length;i++){
-var f=files[i];
-if(f.dir){
-h+='<div class="fi dr" onclick="onDir(\''+escAttr(f.name)+'\')" oncontextmenu="event.preventDefault();showFoDlg(\''+escAttr(f.name)+'\')">';
-h+='<span class="fic">&#x1F4C1;</span><span class="fn">'+esc(f.name)+'/</span></div>';
-}else{
-h+='<div class="fi" onclick="showFiDlg(\''+escAttr(f.name)+'\','+f.size+')">';
-h+='<span class="fic">&#x1F4C4;</span><span class="fn">'+esc(f.name)+'</span>';
-h+='<span class="fs">'+fmt(f.size)+'</span></div>';
-}
-}
-$('fileList').innerHTML=h;
-}).catch(function(){$('fileList').innerHTML='<div class="em">Failed to load files</div>'});
-}
-function escAttr(s){return s.replace(/'/g,"\\'").replace(/"/g,'&quot;')}
-function onDir(name){loadDir(cp+(cp.endsWith('/')?'':'/')+name)}
-function goBack(){
-if(cp==='/') return;
-var p=cp.replace(/\/$/,'');
-var i=p.lastIndexOf('/');
-loadDir(i<=0?'/':p.substring(0,i));
-}
-function showFiDlg(name,size){
-selN=name;selD=false;
-selP=cp+(cp.endsWith('/')?'':'/')+name;
-$('fdName').textContent=name+' ('+fmt(size)+')';
-$('fdPlay').style.display=name.toLowerCase().endsWith('.mp4')?'block':'none';
-$('fileDlg').classList.add('sh');
-}
-function showFoDlg(name){
-selN=name;selD=true;
-selP=cp+(cp.endsWith('/')?'':'/')+name;
-$('foDlgName').textContent=name+'/';
-$('folderDlg').classList.add('sh');
-}
-function playFromDlg(){
-closeDlg('fileDlg');
-fetch('/api/play?file='+encodeURIComponent(selN),{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-if(d.ok){showTab('player');}
-else{alert('Cannot play: file not in playlist (only root .mp4 files are playable)');}
-});
-}
-function dlFile(){
-closeDlg('fileDlg');
-var a=document.createElement('a');
-a.href='/api/download?path='+encodeURIComponent(selP);
-a.download=selN;a.click();
-}
-function showRen(){
-closeDlg('fileDlg');closeDlg('folderDlg');
-$('renIn').value=selN;
-$('renDlg').classList.add('sh');
-setTimeout(function(){
-var inp=$('renIn');inp.focus();
-if(!selD){var dot=selN.lastIndexOf('.');if(dot>0)inp.setSelectionRange(0,dot);else inp.select();}
-else inp.select();
-},100);
-}
-function doRename(){
-var nn=$('renIn').value.trim();
-if(!nn||nn===selN){closeDlg('renDlg');return;}
-fetch('/api/rename?path='+encodeURIComponent(selP)+'&name='+encodeURIComponent(nn),{method:'POST'})
-.then(function(r){return r.json()}).then(function(d){
-closeDlg('renDlg');
-if(d.ok)loadDir(cp);else alert('Rename failed');
-});
-}
-function delItem(){
-var msg=selD?'Delete folder "'+selN+'" and all contents?':'Delete "'+selN+'"?';
-if(!confirm(msg))return;
-closeDlg('fileDlg');closeDlg('folderDlg');
-fetch('/api/delete?path='+encodeURIComponent(selP),{method:'POST'})
-.then(function(r){return r.json()}).then(function(d){
-if(d.ok)loadDir(cp);else alert('Delete failed');
-});
-}
-function showNF(){
-$('nfIn').value='';
-$('nfDlg').classList.add('sh');
-setTimeout(function(){$('nfIn').focus()},100);
-}
-function doNF(){
-var nm=$('nfIn').value.trim();
-if(!nm){closeDlg('nfDlg');return;}
-fetch('/api/mkdir?path='+encodeURIComponent(cp)+'&name='+encodeURIComponent(nm),{method:'POST'})
-.then(function(r){return r.json()}).then(function(d){
-closeDlg('nfDlg');
-if(d.ok)loadDir(cp);else alert('Failed to create folder');
-});
-}
-function toggleUp(){
-var a=$('upArea');
-a.classList.toggle('sh');
-}
-var upArea=$('upArea');
-upArea.addEventListener('dragover',function(e){e.preventDefault();upArea.classList.add('dg')});
-upArea.addEventListener('dragleave',function(e){e.preventDefault();upArea.classList.remove('dg')});
-upArea.addEventListener('drop',function(e){e.preventDefault();upArea.classList.remove('dg');doUpload(e.dataTransfer.files)});
-$('fInput').addEventListener('change',function(e){doUpload(e.target.files);e.target.value=''});
-$('pCancel').addEventListener('click',function(){if(curXhr){upCancelled=true;curXhr.abort()}});
-function uploadOne(file,path){
-return new Promise(function(resolve,reject){
-var xhr=new XMLHttpRequest();
-curXhr=xhr;
-xhr.upload.addEventListener('progress',function(e){
-if(e.lengthComputable){
-var pct=Math.round(e.loaded/e.total*100);
-$('pBar').style.width=pct+'%';
-$('pPct').textContent=pct+'%';
-}
-});
-xhr.addEventListener('load',function(){curXhr=null;xhr.status===200?resolve():reject(new Error('HTTP '+xhr.status))});
-xhr.addEventListener('error',function(){curXhr=null;reject(new Error('Network error'))});
-xhr.addEventListener('abort',function(){curXhr=null;reject(new Error('Cancelled'))});
-xhr.open('POST','/api/upload?path='+encodeURIComponent(path)+'&filename='+encodeURIComponent(file.name));
-xhr.send(file);
-});
-}
-async function doUpload(files){
-var st=$('upSt');
-st.textContent='';st.style.color='#28a745';
-$('pWrap').classList.remove('sh');
-upCancelled=false;
-var uploaded=0;
-for(var i=0;i<files.length;i++){
-if(upCancelled){st.textContent='Upload cancelled';st.style.color='#aaa';break;}
-var f=files[i];
-st.style.color='#28a745';
-st.textContent=f.name+' uploading...';
-$('pBar').style.width='0%';$('pPct').textContent='0%';
-$('pWrap').classList.add('sh');
-try{
-await uploadOne(f,cp);
-$('pBar').style.width='100%';$('pPct').textContent='100%';
-st.textContent=f.name+' uploaded';
-uploaded++;
-}catch(err){
-if(upCancelled){st.textContent='Upload cancelled';st.style.color='#aaa';break;}
-st.textContent='Error: '+err.message;st.style.color='#e94560';
-}
-}
-$('pWrap').classList.remove('sh');
-if(uploaded>0)setTimeout(function(){loadDir(cp)},500);
-}
-loadSt();loadPL();
-setInterval(loadSt,3000);
-</script>
+  <div class="header-row">
+    <h1>MP4 Player</h1>
+    <div class="header-buttons">
+      <button class="player-btn" id="playerBtn">&#x1F3AC;</button>
+      <button class="settings-btn" id="settingsBtn">&#x2699;&#xFE0F;</button>
+      <button class="upload-toggle" id="uploadToggle">&#x2B06; Upload</button>
+    </div>
+  </div>
+  <div class="upload-area" id="dropZone">
+    <p>Drop files here to upload</p>
+    <input type="file" id="fileInput" multiple>
+    <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Choose Files</button>
+    <div class="progress-wrapper" id="progressWrapper">
+      <div class="progress-container">
+        <div class="progress-bar" id="progressBar">
+          <span class="progress-text" id="progressText">0%</span>
+        </div>
+      </div>
+      <button class="cancel-btn" id="cancelBtn">&#x2715;</button>
+    </div>
+    <div id="uploadStatus" class="upload-status"></div>
+  </div>
+  <div class="nav-row"><!--BACK_BTN--><p class="path"><!--PATH_DISPLAY--></p><button class="new-folder-btn" id="newFolderBtn">+ Folder</button></div>
+  <!--FILE_LIST-->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+    <div class="loading-text">Loading...</div>
+  </div>
+  <div class="dialog-overlay" id="fileDialog">
+    <div class="dialog">
+      <h3 id="dialogFileName"></h3>
+      <div class="dialog-buttons">
+        <button class="dialog-btn btn-preview" id="btnPreview">Preview</button>
+        <button class="dialog-btn btn-download" id="btnDownload">Download</button>
+        <button class="dialog-btn btn-rename" id="btnRename">Rename</button>
+        <button class="dialog-btn btn-delete" id="btnDelete">Delete</button>
+        <button class="dialog-btn btn-cancel" id="btnCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <div class="dialog-overlay" id="folderDialog">
+    <div class="dialog">
+      <h3 id="folderDialogName"></h3>
+      <div class="dialog-buttons">
+        <button class="dialog-btn btn-rename" id="btnFolderRename">Rename</button>
+        <button class="dialog-btn btn-delete" id="btnFolderDelete">Delete</button>
+        <button class="dialog-btn btn-cancel" id="btnFolderCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <div class="dialog-overlay" id="newFolderDialog">
+    <div class="dialog">
+      <h3>New Folder</h3>
+      <input type="text" class="rename-input" id="newFolderInput" placeholder="Folder name">
+      <div class="dialog-buttons">
+        <button class="dialog-btn btn-save" id="btnNewFolderSave">Create</button>
+        <button class="dialog-btn btn-cancel" id="btnNewFolderCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <div class="dialog-overlay" id="renameDialog">
+    <div class="dialog">
+      <h3>Rename</h3>
+      <input type="text" class="rename-input" id="renameInput" placeholder="New name">
+      <div class="dialog-buttons">
+        <button class="dialog-btn btn-save" id="btnRenameSave">Save</button>
+        <button class="dialog-btn btn-cancel" id="btnRenameCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <div class="preview-overlay" id="previewOverlay">
+    <div class="preview-header">
+      <span class="preview-title" id="previewTitle"></span>
+      <button class="preview-close" id="previewClose">&#x2715;</button>
+    </div>
+    <div class="preview-body" id="previewBody"></div>
+  </div>
+  <div class="dialog-overlay" id="settingsDialog">
+    <div class="dialog">
+      <h3>Settings</h3>
+      <div class="settings-row">
+        <span class="settings-label">SD Total</span>
+        <span class="settings-value" id="sdTotal">-</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Used</span>
+        <span class="settings-value" id="sdUsed">-</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Free</span>
+        <span class="settings-value" id="sdFree">-</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Upload Limit</span>
+        <span><input type="number" class="settings-input" id="maxSizeInput" min="1" max="100"> MB</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Allow Management</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="deleteAllowedToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="dialog-buttons" style="margin-top:16px;">
+        <button class="dialog-btn btn-save" id="btnSaveSettings">Save</button>
+        <button class="dialog-btn btn-cancel" id="btnCloseSettings">Close</button>
+      </div>
+    </div>
+  </div>
+  <div class="dialog-overlay" id="playerDialog">
+    <div class="dialog" style="max-width:360px">
+      <h3>Player</h3>
+      <div class="player-status">
+        <div class="player-status-text" id="playerStatusText">Loading...</div>
+        <div class="player-file" id="playerFile">-</div>
+      </div>
+      <div class="player-controls">
+        <button class="player-ctrl-btn" onclick="playerApi('/api/prev')">&#x23EE;</button>
+        <button class="player-ctrl-btn" onclick="playerApi('/api/stop')">&#x23F9;</button>
+        <button class="player-ctrl-btn play-btn" onclick="playerApi('/api/play')">&#x25B6;</button>
+        <button class="player-ctrl-btn" onclick="playerApi('/api/next')">&#x23ED;</button>
+      </div>
+      <div class="playlist-section" id="playerPlaylist"></div>
+      <div class="dialog-buttons" style="margin-top:16px">
+        <button class="dialog-btn btn-cancel" onclick="closePlayerDialog()">Close</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    var dropZone = document.getElementById('dropZone');
+    var fileInput = document.getElementById('fileInput');
+    var uploadStatusEl = document.getElementById('uploadStatus');
+    var uploadToggle = document.getElementById('uploadToggle');
+    var currentPath = '__JSPATH__';
+    var fileDialog = document.getElementById('fileDialog');
+    var dialogFileName = document.getElementById('dialogFileName');
+    var settingsDialog = document.getElementById('settingsDialog');
+    var settingsBtn = document.getElementById('settingsBtn');
+    var maxSizeInput = document.getElementById('maxSizeInput');
+    var deleteAllowedToggle = document.getElementById('deleteAllowedToggle');
+    var btnDelete = document.getElementById('btnDelete');
+    var btnRename = document.getElementById('btnRename');
+    var btnPreview = document.getElementById('btnPreview');
+    var renameDialog = document.getElementById('renameDialog');
+    var renameInput = document.getElementById('renameInput');
+    var previewOverlay = document.getElementById('previewOverlay');
+    var previewTitle = document.getElementById('previewTitle');
+    var previewBody = document.getElementById('previewBody');
+    var folderDialog = document.getElementById('folderDialog');
+    var folderDialogName = document.getElementById('folderDialogName');
+    var newFolderBtn = document.getElementById('newFolderBtn');
+    var newFolderDialog = document.getElementById('newFolderDialog');
+    var newFolderInput = document.getElementById('newFolderInput');
+    var selectedFilePath = '';
+    var selectedFileName = '';
+    var maxUploadSize = parseInt(sessionStorage.getItem('maxUploadSize') || '15');
+    var sdFreeSpace = 0;
+    var deleteAllowed = sessionStorage.getItem('deleteAllowed') === 'true';
+
+    function updateManageUI() {
+      newFolderBtn.style.display = deleteAllowed ? 'block' : 'none';
+      var btns = document.querySelectorAll('.folder-edit-btn');
+      for (var i = 0; i < btns.length; i++) {
+        btns[i].style.display = deleteAllowed ? 'block' : 'none';
+      }
+    }
+    updateManageUI();
+
+    var imageExts = ['jpg','jpeg','png','gif','bmp','webp','svg'];
+    var textExts = ['txt','csv','json','xml','html','htm','css','js','py','c','cpp','h','hpp','md','log','ini','cfg','yaml','yml'];
+
+    function getFileExt(name) {
+      var i = name.lastIndexOf('.');
+      return i > 0 ? name.substring(i + 1).toLowerCase() : '';
+    }
+    function isPreviewable(name) {
+      var ext = getFileExt(name);
+      return imageExts.indexOf(ext) >= 0 || textExts.indexOf(ext) >= 0;
+    }
+    function isImageFile(name) {
+      return imageExts.indexOf(getFileExt(name)) >= 0;
+    }
+
+    maxSizeInput.value = maxUploadSize;
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+      return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+
+    // Settings dialog
+    settingsBtn.addEventListener('click', function() {
+      deleteAllowedToggle.checked = deleteAllowed;
+      settingsDialog.classList.add('show');
+      fetch('/storage-info').then(function(r) { return r.json(); }).then(function(data) {
+        document.getElementById('sdTotal').textContent = formatBytes(data.total);
+        document.getElementById('sdUsed').textContent = formatBytes(data.used);
+        document.getElementById('sdFree').textContent = formatBytes(data.free);
+        sdFreeSpace = data.free;
+      }).catch(function() {});
+    });
+
+    document.getElementById('btnSaveSettings').addEventListener('click', function() {
+      var val = parseInt(maxSizeInput.value);
+      if (val >= 1 && val <= 100) {
+        maxUploadSize = val;
+        sessionStorage.setItem('maxUploadSize', val.toString());
+        deleteAllowed = deleteAllowedToggle.checked;
+        sessionStorage.setItem('deleteAllowed', deleteAllowed.toString());
+        updateManageUI();
+        settingsDialog.classList.remove('show');
+      } else {
+        alert('Enter a value between 1 and 100');
+      }
+    });
+
+    document.getElementById('btnCloseSettings').addEventListener('click', function() {
+      maxSizeInput.value = maxUploadSize;
+      deleteAllowedToggle.checked = deleteAllowed;
+      settingsDialog.classList.remove('show');
+    });
+
+    settingsDialog.addEventListener('click', function(e) {
+      if (e.target === settingsDialog) {
+        maxSizeInput.value = maxUploadSize;
+        deleteAllowedToggle.checked = deleteAllowed;
+        settingsDialog.classList.remove('show');
+      }
+    });
+
+    // File dialog
+    function showFileDialog(filePath, fileName) {
+      selectedFilePath = filePath;
+      selectedFileName = fileName;
+      dialogFileName.textContent = fileName;
+      btnPreview.style.display = isPreviewable(fileName) ? 'block' : 'none';
+      btnRename.style.display = deleteAllowed ? 'block' : 'none';
+      btnDelete.style.display = deleteAllowed ? 'block' : 'none';
+      fileDialog.classList.add('show');
+    }
+
+    document.getElementById('btnDownload').addEventListener('click', function() {
+      window.location.href = '/download?file=' + encodeURIComponent(selectedFilePath);
+      fileDialog.classList.remove('show');
+    });
+
+    document.getElementById('btnDelete').addEventListener('click', function() {
+      if (confirm('Delete "' + selectedFileName + '"?')) {
+        fetch('/delete?file=' + encodeURIComponent(selectedFilePath), { method: 'POST' })
+          .then(function(r) {
+            if (r.ok) { location.reload(); } else { alert('Delete failed'); }
+          }).catch(function(err) { alert('Error: ' + err); });
+      }
+      fileDialog.classList.remove('show');
+    });
+
+    document.getElementById('btnCancel').addEventListener('click', function() {
+      fileDialog.classList.remove('show');
+    });
+
+    fileDialog.addEventListener('click', function(e) {
+      if (e.target === fileDialog) fileDialog.classList.remove('show');
+    });
+
+    // Preview
+    btnPreview.addEventListener('click', function() {
+      fileDialog.classList.remove('show');
+      previewTitle.textContent = selectedFileName;
+      previewBody.innerHTML = '';
+      if (isImageFile(selectedFileName)) {
+        var img = document.createElement('img');
+        img.src = '/preview?file=' + encodeURIComponent(selectedFilePath);
+        img.alt = selectedFileName;
+        previewBody.appendChild(img);
+      } else {
+        var pre = document.createElement('pre');
+        pre.textContent = 'Loading...';
+        previewBody.appendChild(pre);
+        fetch('/preview?file=' + encodeURIComponent(selectedFilePath))
+          .then(function(r) { return r.text(); })
+          .then(function(text) { pre.textContent = text; })
+          .catch(function(err) { pre.textContent = 'Error: ' + err; });
+      }
+      previewOverlay.classList.add('show');
+    });
+
+    function closePreview() {
+      previewOverlay.classList.remove('show');
+      previewBody.innerHTML = '';
+    }
+
+    document.getElementById('previewClose').addEventListener('click', closePreview);
+    previewOverlay.addEventListener('click', function(e) {
+      if (e.target === previewOverlay) closePreview();
+    });
+
+    // Rename
+    btnRename.addEventListener('click', function() {
+      fileDialog.classList.remove('show');
+      renameInput.value = selectedFileName;
+      renameDialog.classList.add('show');
+      var dotIdx = selectedFileName.lastIndexOf('.');
+      renameInput.focus();
+      if (dotIdx > 0) {
+        renameInput.setSelectionRange(0, dotIdx);
+      } else {
+        renameInput.select();
+      }
+    });
+
+    document.getElementById('btnRenameSave').addEventListener('click', function() {
+      var newName = renameInput.value.trim();
+      if (!newName || newName === selectedFileName) {
+        renameDialog.classList.remove('show');
+        return;
+      }
+      fetch('/rename?file=' + encodeURIComponent(selectedFilePath) + '&name=' + encodeURIComponent(newName), { method: 'POST' })
+        .then(function(r) {
+          if (r.ok) { location.reload(); } else { alert('Rename failed'); }
+        }).catch(function(err) { alert('Error: ' + err); });
+      renameDialog.classList.remove('show');
+    });
+
+    document.getElementById('btnRenameCancel').addEventListener('click', function() {
+      renameDialog.classList.remove('show');
+    });
+
+    renameDialog.addEventListener('click', function(e) {
+      if (e.target === renameDialog) renameDialog.classList.remove('show');
+    });
+
+    // Folder dialog
+    function showFolderDialog(path, name) {
+      selectedFilePath = path;
+      selectedFileName = name;
+      folderDialogName.textContent = name + '/';
+      folderDialog.classList.add('show');
+    }
+
+    document.getElementById('btnFolderDelete').addEventListener('click', function() {
+      if (confirm('Delete folder "' + selectedFileName + '" and all contents?')) {
+        fetch('/delete?file=' + encodeURIComponent(selectedFilePath) + '&dir=1', { method: 'POST' })
+          .then(function(r) {
+            if (r.ok) { location.reload(); } else { alert('Delete folder failed'); }
+          }).catch(function(err) { alert('Error: ' + err); });
+      }
+      folderDialog.classList.remove('show');
+    });
+
+    document.getElementById('btnFolderRename').addEventListener('click', function() {
+      folderDialog.classList.remove('show');
+      renameInput.value = selectedFileName;
+      renameDialog.classList.add('show');
+      renameInput.focus();
+      renameInput.select();
+    });
+
+    document.getElementById('btnFolderCancel').addEventListener('click', function() {
+      folderDialog.classList.remove('show');
+    });
+
+    folderDialog.addEventListener('click', function(e) {
+      if (e.target === folderDialog) folderDialog.classList.remove('show');
+    });
+
+    // New folder
+    newFolderBtn.addEventListener('click', function() {
+      newFolderInput.value = '';
+      newFolderDialog.classList.add('show');
+      newFolderInput.focus();
+    });
+
+    document.getElementById('btnNewFolderSave').addEventListener('click', function() {
+      var name = newFolderInput.value.trim();
+      if (!name) { newFolderDialog.classList.remove('show'); return; }
+      fetch('/mkdir?path=' + encodeURIComponent(currentPath) + '&name=' + encodeURIComponent(name) + '&time=' + Math.floor(Date.now() / 1000) + '&tz=' + new Date().getTimezoneOffset(), { method: 'POST' })
+        .then(function(r) {
+          if (r.ok) { location.reload(); } else { alert('Create folder failed'); }
+        }).catch(function(err) { alert('Error: ' + err); });
+      newFolderDialog.classList.remove('show');
+    });
+
+    document.getElementById('btnNewFolderCancel').addEventListener('click', function() {
+      newFolderDialog.classList.remove('show');
+    });
+
+    newFolderDialog.addEventListener('click', function(e) {
+      if (e.target === newFolderDialog) newFolderDialog.classList.remove('show');
+    });
+
+    // Upload area
+    if (sessionStorage.getItem('uploadAreaOpen') === 'true') {
+      dropZone.classList.add('show');
+    }
+
+    uploadToggle.addEventListener('click', function() {
+      dropZone.classList.toggle('show');
+      sessionStorage.setItem('uploadAreaOpen', dropZone.classList.contains('show'));
+    });
+
+    dropZone.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', function(e) {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      uploadFiles(e.dataTransfer.files);
+    });
+
+    fileInput.addEventListener('change', function(e) {
+      uploadFiles(e.target.files);
+    });
+
+    var progressWrapper = document.getElementById('progressWrapper');
+    var progressBar = document.getElementById('progressBar');
+    var progressText = document.getElementById('progressText');
+    var cancelBtn = document.getElementById('cancelBtn');
+    var currentXhr = null;
+    var uploadCancelled = false;
+
+    cancelBtn.addEventListener('click', function() {
+      if (currentXhr) {
+        uploadCancelled = true;
+        currentXhr.abort();
+      }
+    });
+
+    function uploadFile(file, path, time) {
+      return new Promise(function(resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        currentXhr = xhr;
+
+        xhr.upload.addEventListener('progress', function(e) {
+          if (e.lengthComputable) {
+            var percent = Math.round((e.loaded / e.total) * 100);
+            progressBar.style.width = percent + '%';
+            progressText.textContent = percent + '%';
+          }
+        });
+
+        xhr.addEventListener('load', function() {
+          currentXhr = null;
+          if (xhr.status === 200) {
+            resolve();
+          } else {
+            reject(new Error(xhr.responseText || 'Upload failed'));
+          }
+        });
+
+        xhr.addEventListener('error', function() {
+          currentXhr = null;
+          reject(new Error('Network error'));
+        });
+
+        xhr.addEventListener('abort', function() {
+          currentXhr = null;
+          reject(new Error('Cancelled'));
+        });
+
+        xhr.open('POST', '/upload?path=' + encodeURIComponent(path) + '&filename=' + encodeURIComponent(file.name) + '&size=' + file.size + '&time=' + time + '&tz=' + new Date().getTimezoneOffset());
+        xhr.send(file);
+      });
+    }
+
+    function uploadFiles(files) {
+      uploadStatusEl.textContent = 'Checking...';
+      uploadStatusEl.style.color = '#51cf66';
+      progressWrapper.classList.remove('show');
+      uploadCancelled = false;
+
+      fetch('/storage-info').then(function(r) { return r.json(); }).then(function(data) {
+        sdFreeSpace = data.free;
+        doUploadFiles(files);
+      }).catch(function() {
+        uploadStatusEl.textContent = 'Storage check failed';
+        uploadStatusEl.style.color = '#fa5252';
+      });
+    }
+
+    function doUploadFiles(files) {
+      var maxBytes = maxUploadSize * 1024 * 1024;
+      var now = Math.floor(Date.now() / 1000);
+      var uploaded = 0;
+      var idx = 0;
+
+      function next() {
+        if (idx >= files.length || uploadCancelled) {
+          progressWrapper.classList.remove('show');
+          if (uploadCancelled) {
+            uploadStatusEl.textContent = 'Upload cancelled';
+            uploadStatusEl.style.color = '#868e96';
+          }
+          if (uploaded > 0) {
+            sessionStorage.setItem('uploadAreaOpen', 'true');
+            setTimeout(function() { location.reload(); }, 500);
+          }
+          return;
+        }
+
+        var f = files[idx];
+        idx++;
+
+        if (f.size > maxBytes) {
+          uploadStatusEl.textContent = f.name + ' exceeds limit (' + maxUploadSize + 'MB)';
+          uploadStatusEl.style.color = '#fa5252';
+          next();
+          return;
+        }
+        if (f.size > sdFreeSpace) {
+          uploadStatusEl.textContent = 'Not enough space on SD card';
+          uploadStatusEl.style.color = '#fa5252';
+          next();
+          return;
+        }
+
+        uploadStatusEl.style.color = '#51cf66';
+        uploadStatusEl.textContent = f.name + ' uploading...';
+        progressBar.style.width = '0%';
+        progressText.textContent = '0%';
+        progressWrapper.classList.add('show');
+
+        uploadFile(f, currentPath, now).then(function() {
+          progressBar.style.width = '100%';
+          progressText.textContent = '100%';
+          uploadStatusEl.textContent = f.name + ' uploaded';
+          sdFreeSpace -= f.size;
+          uploaded++;
+          next();
+        }).catch(function(err) {
+          if (uploadCancelled) {
+            uploadStatusEl.textContent = 'Upload cancelled';
+            uploadStatusEl.style.color = '#868e96';
+            progressWrapper.classList.remove('show');
+            if (uploaded > 0) {
+              sessionStorage.setItem('uploadAreaOpen', 'true');
+              setTimeout(function() { location.reload(); }, 500);
+            }
+          } else {
+            uploadStatusEl.textContent = 'Error: ' + err.message;
+            uploadStatusEl.style.color = '#fa5252';
+            next();
+          }
+        });
+      }
+      next();
+    }
+
+    // Loading overlay for folder navigation
+    var loadingOverlay = document.getElementById('loadingOverlay');
+    var navLinks = document.querySelectorAll('.dir a, .back-btn');
+    for (var li = 0; li < navLinks.length; li++) {
+      (function(link) {
+        link.addEventListener('click', function(e) {
+          e.preventDefault();
+          loadingOverlay.classList.add('show');
+          var href = link.getAttribute('href');
+          requestAnimationFrame(function() {
+            window.location.href = href;
+          });
+        });
+      })(navLinks[li]);
+    }
+
+    // Player dialog
+    var playerDialog = document.getElementById('playerDialog');
+    var playerPollTimer = null;
+
+    document.getElementById('playerBtn').addEventListener('click', function() {
+      playerDialog.classList.add('show');
+      loadPlayerStatus();
+      loadPlayerPlaylist();
+    });
+
+    playerDialog.addEventListener('click', function(e) {
+      if (e.target === playerDialog) closePlayerDialog();
+    });
+
+    function closePlayerDialog() {
+      playerDialog.classList.remove('show');
+      if (playerPollTimer) { clearInterval(playerPollTimer); playerPollTimer = null; }
+    }
+
+    function escHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function loadPlayerStatus() {
+      fetch('/api/status').then(function(r) { return r.json(); }).then(function(d) {
+        document.getElementById('playerStatusText').textContent = d.playing ? 'Playing...' : 'Stopped';
+        document.getElementById('playerStatusText').style.color = d.playing ? '#51cf66' : '#868e96';
+        document.getElementById('playerFile').textContent = d.file || '-';
+        var items = document.querySelectorAll('.playlist-item');
+        for (var i = 0; i < items.length; i++) {
+          items[i].classList.toggle('current', items[i].dataset.idx == d.index && d.playing);
+        }
+      }).catch(function() {
+        document.getElementById('playerStatusText').textContent = 'Connection error';
+        document.getElementById('playerStatusText').style.color = '#fa5252';
+      });
+      if (!playerPollTimer) {
+        playerPollTimer = setInterval(loadPlayerStatus, 3000);
+      }
+    }
+
+    function loadPlayerPlaylist() {
+      fetch('/api/playlist').then(function(r) { return r.json(); }).then(function(list) {
+        var h = '';
+        if (list.length === 0) h = '<div style="text-align:center;color:#868e96;padding:16px;font-size:14px">No MP4 files found</div>';
+        for (var i = 0; i < list.length; i++) {
+          h += '<div class="playlist-item" data-idx="' + i + '" onclick="playIdx(' + i + ')">';
+          h += '<span class="pl-name">' + escHtml(list[i]) + '</span>';
+          h += '<span class="pl-icon">&#x25B6;</span></div>';
+        }
+        document.getElementById('playerPlaylist').innerHTML = h;
+        loadPlayerStatus();
+      }).catch(function() {
+        document.getElementById('playerPlaylist').innerHTML = '<div style="text-align:center;color:#fa5252;padding:16px;font-size:14px">Failed to load</div>';
+      });
+    }
+
+    function playerApi(url) {
+      fetch(url, { method: 'POST' }).then(function(r) { return r.json(); }).then(function() {
+        setTimeout(loadPlayerStatus, 300);
+      }).catch(function() {});
+    }
+
+    function playIdx(i) {
+      fetch('/api/play?index=' + i, { method: 'POST' }).then(function(r) { return r.json(); }).then(function() {
+        setTimeout(loadPlayerStatus, 500);
+      });
+    }
+  </script>
 </body>
 </html>
 )rawliteral";

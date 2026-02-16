@@ -19,6 +19,9 @@ private:
     void start_http_server();
     void show_connection_info();
 
+    // SSR file browser
+    static esp_err_t browse_handler(httpd_req_t *req);
+
     // Player control handlers
     static esp_err_t status_handler(httpd_req_t *req);
     static esp_err_t playlist_handler(httpd_req_t *req);
@@ -28,16 +31,13 @@ private:
     static esp_err_t prev_handler(httpd_req_t *req);
 
     // File management handlers
-    static esp_err_t files_handler(httpd_req_t *req);
     static esp_err_t download_handler(httpd_req_t *req);
+    static esp_err_t preview_handler(httpd_req_t *req);
     static esp_err_t upload_handler(httpd_req_t *req);
     static esp_err_t delete_handler(httpd_req_t *req);
     static esp_err_t rename_handler(httpd_req_t *req);
     static esp_err_t mkdir_handler(httpd_req_t *req);
     static esp_err_t storage_handler(httpd_req_t *req);
-
-    // UI handler
-    static esp_err_t index_handler(httpd_req_t *req);
 
     // Utility
     static const char *get_content_type(const char *filepath);
