@@ -162,15 +162,18 @@ void FileServer::start_http_server()
 
     ESP_ERROR_CHECK(httpd_start(&server_, &config));
 
-    // File browser UI (SSR)
-    httpd_uri_t index_uri  = { .uri = "/",       .method = HTTP_GET, .handler = browse_handler, .user_ctx = this };
-    httpd_uri_t browse_uri = { .uri = "/browse",  .method = HTTP_GET, .handler = browse_handler, .user_ctx = this };
+    // Page handlers
+    httpd_uri_t index_uri  = { .uri = "/",        .method = HTTP_GET, .handler = index_redirect_handler, .user_ctx = this };
+    httpd_uri_t player_uri = { .uri = "/player",   .method = HTTP_GET, .handler = player_handler,         .user_ctx = this };
+    httpd_uri_t browse_uri = { .uri = "/browse",   .method = HTTP_GET, .handler = browse_handler,         .user_ctx = this };
     httpd_register_uri_handler(server_, &index_uri);
+    httpd_register_uri_handler(server_, &player_uri);
     httpd_register_uri_handler(server_, &browse_uri);
 
     // Player control API
     httpd_uri_t status_uri   = { .uri = "/api/status",   .method = HTTP_GET,  .handler = status_handler,   .user_ctx = this };
     httpd_uri_t playlist_uri = { .uri = "/api/playlist", .method = HTTP_GET,  .handler = playlist_handler, .user_ctx = this };
+    httpd_uri_t folder_uri   = { .uri = "/api/folder",   .method = HTTP_POST, .handler = folder_handler,   .user_ctx = this };
     httpd_uri_t play_uri     = { .uri = "/api/play",     .method = HTTP_POST, .handler = play_handler,     .user_ctx = this };
     httpd_uri_t stop_uri     = { .uri = "/api/stop",     .method = HTTP_POST, .handler = stop_handler,     .user_ctx = this };
     httpd_uri_t next_uri     = { .uri = "/api/next",     .method = HTTP_POST, .handler = next_handler,     .user_ctx = this };
@@ -178,6 +181,7 @@ void FileServer::start_http_server()
 
     httpd_register_uri_handler(server_, &status_uri);
     httpd_register_uri_handler(server_, &playlist_uri);
+    httpd_register_uri_handler(server_, &folder_uri);
     httpd_register_uri_handler(server_, &play_uri);
     httpd_register_uri_handler(server_, &stop_uri);
     httpd_register_uri_handler(server_, &next_uri);
@@ -216,6 +220,22 @@ void FileServer::start()
     init_wifi_ap();
     start_http_server();
     show_connection_info();
+}
+
+// ---- Page handlers ----
+
+esp_err_t FileServer::index_redirect_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req, HTML_REDIRECT);
+    return ESP_OK;
+}
+
+esp_err_t FileServer::player_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req, HTML_PLAYER_TEMPLATE);
+    return ESP_OK;
 }
 
 // ---- SSR Browse handler ----
@@ -265,7 +285,7 @@ esp_err_t FileServer::browse_handler(httpd_req_t *req)
 
         char back_html[300];
         snprintf(back_html, sizeof(back_html),
-                 "<a class='back-btn' href='/browse?path=%s'>&#x2190; Back</a>",
+                 "<a class='back-btn' href='/browse?path=%s'>&#x2190;</a>",
                  parent);
         httpd_resp_sendstr_chunk(req, back_html);
     }
@@ -391,11 +411,12 @@ esp_err_t FileServer::status_handler(httpd_req_t *req)
 
     char buf[512];
     snprintf(buf, sizeof(buf),
-             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d}",
+             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\"}",
              ctrl.is_playing() ? "true" : "false",
              ctrl.current_file(),
              ctrl.current_index(),
-             (int)ctrl.playlist().size());
+             (int)ctrl.playlist().size(),
+             ctrl.current_folder().c_str());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
@@ -405,10 +426,16 @@ esp_err_t FileServer::status_handler(httpd_req_t *req)
 esp_err_t FileServer::playlist_handler(httpd_req_t *req)
 {
     auto *self = static_cast<FileServer *>(req->user_ctx);
-    auto &playlist = self->controller_.playlist();
+    auto &ctrl = self->controller_;
+    auto &playlist = ctrl.playlist();
+    auto &subfolders = ctrl.subfolders();
 
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr_chunk(req, "[");
+
+    // Send: {"folder":"...","files":[...],"folders":[...]}
+    char header[300];
+    snprintf(header, sizeof(header), "{\"folder\":\"%s\",\"files\":[", ctrl.current_folder().c_str());
+    httpd_resp_sendstr_chunk(req, header);
 
     for (size_t i = 0; i < playlist.size(); i++) {
         char entry[300];
@@ -417,8 +444,36 @@ esp_err_t FileServer::playlist_handler(httpd_req_t *req)
         httpd_resp_sendstr_chunk(req, entry);
     }
 
-    httpd_resp_sendstr_chunk(req, "]");
+    httpd_resp_sendstr_chunk(req, "],\"folders\":[");
+
+    for (size_t i = 0; i < subfolders.size(); i++) {
+        char entry[600];
+        snprintf(entry, sizeof(entry), "%s{\"name\":\"%s\",\"thumb\":\"%s\"}",
+                 i > 0 ? "," : "",
+                 subfolders[i].name.c_str(),
+                 subfolders[i].thumb.c_str());
+        httpd_resp_sendstr_chunk(req, entry);
+    }
+
+    httpd_resp_sendstr_chunk(req, "]}");
     httpd_resp_sendstr_chunk(req, nullptr);
+    return ESP_OK;
+}
+
+esp_err_t FileServer::folder_handler(httpd_req_t *req)
+{
+    auto *self = static_cast<FileServer *>(req->user_ctx);
+
+    char query[256] = "";
+    httpd_req_get_url_query_str(req, query, sizeof(query));
+
+    char name_param[200] = "";
+    get_decoded_query_param(query, "name", name_param, sizeof(name_param));
+
+    self->controller_.select_folder(strlen(name_param) > 0 ? name_param : nullptr);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
 }
 
@@ -682,7 +737,7 @@ esp_err_t FileServer::upload_handler(httpd_req_t *req)
     }
 
     // Rescan playlist in case a new .mp4 was uploaded
-    self->controller_.scan_playlist();
+    self->controller_.rescan();
 
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_sendstr(req, "OK");
@@ -728,7 +783,7 @@ esp_err_t FileServer::delete_handler(httpd_req_t *req)
 
     if (ok) {
         ESP_LOGI(TAG, "Deleted: %s", filepath);
-        self->controller_.scan_playlist();
+        self->controller_.rescan();
         httpd_resp_set_type(req, "text/plain");
         httpd_resp_sendstr(req, "OK");
     } else {
@@ -765,7 +820,7 @@ esp_err_t FileServer::rename_handler(httpd_req_t *req)
     bool ok = (::rename(oldpath, newpath) == 0);
     if (ok) {
         ESP_LOGI(TAG, "Renamed: %s -> %s", oldpath, newpath);
-        self->controller_.scan_playlist();
+        self->controller_.rescan();
         httpd_resp_set_type(req, "text/plain");
         httpd_resp_sendstr(req, "OK");
     } else {

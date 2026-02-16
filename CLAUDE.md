@@ -109,7 +109,7 @@ Atom S3R では Display(SPI3_HOST) → SD(SPI2_HOST) の順で初期化すると
 - `src/psram_alloc.h` — PSRAM/内部RAM確保ヘルパー（`psram_alloc<T>()`, `psram_free()` 等）
 - `src/main.cpp` — SD→Display→WiFi→MediaController初期化、メインループ
 - `src/mp4_player.h` — namespace mp4: FrameMsg, AudioMsg, VideoInfo, PipelineSync, DoubleBuffer, AudioInfo, Stage/Pipeline クラス宣言, Mp4Player
-- `src/media_controller.h/cpp` — MediaController: プレイリスト管理、再生/停止/次/前/tick
+- `src/media_controller.h/cpp` — MediaController: PLAYLISTフォルダベースのプレイリスト管理、サブフォルダ選択、自動次再生、再生/停止/次/前/tick
 - `src/wifi_file_server.h/cpp` — FileServer: WiFi AP + HTTP server + REST API + ファイル管理
 - `src/html_content.h` — Web UI SPA (HTML/CSS/JS、const char[] raw string literal)
 - `src/qr_display.h` — QRコード生成+LovyanGFX描画（espressif/qrcode、WiFi接続QR表示）
@@ -144,7 +144,7 @@ rm -f sdkconfig.atoms3r_spk && rm -rf .pio/build/atoms3r_spk && pio run -e atoms
 **重要:** `sdkconfig.defaults.*` を変更した場合、生成された `sdkconfig.<env>` を削除しないと反映されない
 
 ## Test Video Preparation
-H.264 Baseline Profile 必須（SWデコーダ制限）。ファイル名: `/sdcard/video.mp4`
+H.264 Baseline Profile 必須（SWデコーダ制限）。動画は `/sdcard/PLAYLIST/` フォルダに配置する。
 LCDより大きい動画はアスペクト比維持で自動縮小表示（最大対応 960x540）。高解像度はコマ落ちするため **320x240 推奨**。
 
 ```bash
@@ -175,27 +175,31 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 
 ### アーキテクチャ
 - **WiFi AP**: WPA2, SSID="MP4Player", Password="12345678" (常時ON)
-- **HTTP server**: `esp_http_server`、起動時に16個のURIハンドラ登録
-- **ハイブリッド起動**: WiFi起動 → .mp4があれば自動再生 → ブラウザから操作可能
+- **HTTP server**: `esp_http_server`、起動時に17個のURIハンドラ登録
+- **プレイリスト**: `/sdcard/PLAYLIST/` フォルダ内の .mp4 ファイルを順次再生。直下にmp4がない場合はサブフォルダを選択
+- **ハイブリッド起動**: WiFi起動 → PLAYLISTフォルダにmp4があれば自動再生 → ブラウザから操作可能
 - **アップロード制限**: 再生中はアップロード不可（メモリ制約）
 - **LCD表示**: Idle時はWiFi接続QRコード + 接続情報を表示、再生中は動画表示
 
 ### REST API
 | Method | Path | 説明 |
 |---|---|---|
-| GET | `/` | Web UI (SPA) |
-| GET | `/api/status` | `{playing, file, index, total}` |
-| GET | `/api/playlist` | `["file1.mp4", "file2.mp4"]` |
+| GET | `/` | リダイレクト（localStorage設定でplayer or browseへ） |
+| GET | `/player` | プレイヤーページ |
+| GET | `/browse` | ファイルブラウザページ |
+| GET | `/api/status` | `{playing, file, index, total, folder}` |
+| GET | `/api/playlist` | `{folder, files:[], folders:[]}` |
+| POST | `/api/folder?name=xxx` | プレイリストフォルダ切替 |
 | POST | `/api/play?file=xxx` or `?index=N` | 再生開始 |
 | POST | `/api/stop` | 再生停止 |
 | POST | `/api/next` / `/api/prev` | 次/前の動画 |
-| GET | `/api/files?path=/` | ディレクトリ一覧JSON |
-| GET | `/api/download?path=/file` | ファイルダウンロード |
-| POST | `/api/upload?path=/&filename=xxx` | アップロード（Raw POST body） |
-| POST | `/api/delete?path=/file` | 削除（再帰） |
-| POST | `/api/rename?path=/file&name=new` | リネーム |
-| POST | `/api/mkdir?path=/&name=dir` | フォルダ作成 |
-| GET | `/api/storage` | `{total, used, free}` |
+| GET | `/download?file=/path` | ファイルダウンロード |
+| GET | `/preview?file=/path` | ファイルプレビュー |
+| POST | `/upload?path=/&filename=xxx` | アップロード（Raw POST body） |
+| POST | `/delete?file=/path` | 削除（再帰） |
+| POST | `/rename?file=/path&name=new` | リネーム |
+| POST | `/mkdir?path=/&name=dir` | フォルダ作成 |
+| GET | `/storage-info` | `{total, used, free}` |
 
 ### WiFi メモリ最適化 (sdkconfig)
 ```

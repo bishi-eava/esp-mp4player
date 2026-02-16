@@ -2,6 +2,653 @@
 
 namespace mp4 {
 
+// Redirect page: checks localStorage for start page preference
+const char HTML_REDIRECT[] = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <script>
+    var p = localStorage.getItem('startPage');
+    location.replace(p === 'browse' ? '/browse' : '/player');
+  </script>
+</head>
+<body></body>
+</html>
+)rawliteral";
+
+// Player page: standalone player with status, controls, and playlist
+const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MP4 Player</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f5f5f5;
+      color: #333;
+      font-size: 18px;
+      line-height: 1.5;
+    }
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 0 0 16px 0;
+      padding-bottom: 12px;
+      border-bottom: 3px solid #ff6b6b;
+    }
+    h1 {
+      color: #ff6b6b;
+      font-size: 24px;
+      margin: 0;
+    }
+    .header-buttons {
+      display: flex;
+      gap: 8px;
+    }
+    .nav-btn {
+      background: #ffa94d;
+      color: #fff;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+    .nav-btn:active {
+      transform: scale(0.98);
+    }
+    .settings-btn {
+      background: #868e96;
+      color: #fff;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    .settings-btn:active {
+      transform: scale(0.98);
+    }
+    .player-section {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 16px;
+    }
+    .player-status {
+      text-align: center;
+      padding: 8px 0 16px;
+    }
+    .player-status-text {
+      font-size: 16px;
+      color: #868e96;
+    }
+    .player-file {
+      font-size: 18px;
+      font-weight: bold;
+      color: #ff6b6b;
+      margin-top: 4px;
+      word-break: break-all;
+    }
+    .player-controls {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .player-ctrl-btn {
+      background: #e9ecef;
+      border: none;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .player-ctrl-btn:active {
+      background: #ff6b6b;
+      color: #fff;
+    }
+    .player-ctrl-btn.play-btn {
+      background: #ff6b6b;
+      color: #fff;
+      width: 56px;
+      height: 56px;
+      font-size: 24px;
+    }
+    .player-ctrl-btn.play-btn:active {
+      background: #e85050;
+    }
+    .playlist-section {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .playlist-item {
+      padding: 12px 16px;
+      margin: 4px 0;
+      background: #f8f9fa;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+    }
+    .playlist-item:active {
+      background: #e9ecef;
+    }
+    .playlist-item.current {
+      border-left: 3px solid #ff6b6b;
+      font-weight: bold;
+    }
+    .playlist-item .pl-name {
+      flex: 1;
+      word-break: break-all;
+    }
+    .playlist-item .pl-icon {
+      color: #ff6b6b;
+      margin-left: 8px;
+    }
+    .section-title {
+      font-size: 14px;
+      color: #868e96;
+      margin: 0 0 8px 0;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .no-files {
+      text-align: center;
+      color: #868e96;
+      padding: 24px;
+      font-size: 14px;
+    }
+    .folder-selector {
+      margin-bottom: 16px;
+    }
+    .folder-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 12px;
+    }
+    .folder-card {
+      cursor: pointer;
+      text-align: center;
+    }
+    .folder-card:active {
+      transform: scale(0.96);
+    }
+    .folder-thumb {
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #e9ecef;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .folder-thumb img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .folder-thumb .thumb-blank {
+      font-size: 40px;
+      color: #ced4da;
+    }
+    .folder-card.current .folder-thumb {
+      box-shadow: 0 0 0 3px #e8590c;
+    }
+    .folder-card-name {
+      margin-top: 6px;
+      font-size: 13px;
+      font-weight: bold;
+      color: #495057;
+      word-break: break-all;
+      line-height: 1.3;
+    }
+    .folder-card.current .folder-card-name {
+      color: #e8590c;
+    }
+    .folder-back-row {
+      margin-bottom: 8px;
+    }
+    .folder-back {
+      display: inline-block;
+      padding: 8px 16px;
+      background: #e9ecef;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+      color: #495057;
+    }
+    .folder-back:active {
+      background: #dee2e6;
+    }
+    .dialog-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+    }
+    .dialog-overlay.show {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+    }
+    .dialog {
+      background: #fff;
+      padding: 24px;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 320px;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .dialog h3 {
+      margin: 0 0 24px 0;
+      color: #333;
+      font-size: 18px;
+    }
+    .dialog-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .dialog-btn {
+      padding: 16px 24px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 18px;
+      font-weight: bold;
+    }
+    .dialog-btn:active {
+      transform: scale(0.98);
+    }
+    .btn-save {
+      background: #51cf66;
+      color: #fff;
+    }
+    .btn-cancel {
+      background: #e9ecef;
+      color: #495057;
+    }
+    .settings-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #e9ecef;
+      text-align: left;
+    }
+    .settings-row:last-child {
+      border-bottom: none;
+    }
+    .settings-label {
+      font-size: 14px;
+      color: #495057;
+    }
+    .settings-value {
+      font-size: 14px;
+      color: #333;
+      font-weight: bold;
+    }
+    .settings-input {
+      width: 80px;
+      padding: 8px 12px;
+      font-size: 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      text-align: right;
+    }
+    .settings-input:focus {
+      outline: none;
+      border-color: #4dabf7;
+    }
+    .toggle-switch {
+      position: relative;
+      width: 50px;
+      height: 28px;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #e9ecef;
+      border-radius: 28px;
+      transition: 0.2s;
+    }
+    .toggle-slider::before {
+      position: absolute;
+      content: "";
+      height: 22px;
+      width: 22px;
+      left: 3px;
+      bottom: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: 0.2s;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .toggle-switch input:checked + .toggle-slider {
+      background: #ff6b6b;
+    }
+    .toggle-switch input:checked + .toggle-slider::before {
+      transform: translateX(22px);
+    }
+    .start-page-select {
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .start-page-select:focus {
+      outline: none;
+      border-color: #4dabf7;
+    }
+  </style>
+</head>
+<body>
+  <div class="header-row">
+    <h1>MP4 Player</h1>
+    <div class="header-buttons">
+      <a class="nav-btn" href="/browse">&#x1F4C2;</a>
+      <button class="settings-btn" id="settingsBtn">&#x2699;&#xFE0F;</button>
+    </div>
+  </div>
+  <div class="player-section">
+    <div class="player-status">
+      <div class="player-status-text" id="playerStatusText">Loading...</div>
+      <div class="player-file" id="playerFile">-</div>
+    </div>
+    <div class="player-controls">
+      <button class="player-ctrl-btn" onclick="playerApi('/api/prev')">&#x23EE;</button>
+      <button class="player-ctrl-btn" onclick="playerApi('/api/stop')">&#x23F9;</button>
+      <button class="player-ctrl-btn play-btn" onclick="playerApi('/api/play')">&#x25B6;</button>
+      <button class="player-ctrl-btn" onclick="playerApi('/api/next')">&#x23ED;</button>
+    </div>
+    <div class="folder-selector" id="folderSelector" style="display:none">
+      <p class="section-title">Folders</p>
+      <div id="folderList"></div>
+    </div>
+    <p class="section-title">Playlist</p>
+    <div class="playlist-section" id="playerPlaylist">
+      <div class="no-files">Loading...</div>
+    </div>
+  </div>
+  <div class="dialog-overlay" id="settingsDialog">
+    <div class="dialog">
+      <h3>Settings</h3>
+      <div class="settings-row">
+        <span class="settings-label">SD Total</span>
+        <span class="settings-value" id="sdTotal">-</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Used</span>
+        <span class="settings-value" id="sdUsed">-</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Free</span>
+        <span class="settings-value" id="sdFree">-</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Upload Limit</span>
+        <span><input type="number" class="settings-input" id="maxSizeInput" min="1" max="100"> MB</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Allow Management</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="deleteAllowedToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Start Page</span>
+        <select class="start-page-select" id="startPageSelect">
+          <option value="player">Player</option>
+          <option value="browse">File Browser</option>
+        </select>
+      </div>
+      <div class="dialog-buttons" style="margin-top:16px;">
+        <button class="dialog-btn btn-save" id="btnSaveSettings">Save</button>
+        <button class="dialog-btn btn-cancel" id="btnCloseSettings">Close</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    var settingsDialog = document.getElementById('settingsDialog');
+    var settingsBtn = document.getElementById('settingsBtn');
+    var maxSizeInput = document.getElementById('maxSizeInput');
+    var deleteAllowedToggle = document.getElementById('deleteAllowedToggle');
+    var startPageSelect = document.getElementById('startPageSelect');
+    var maxUploadSize = parseInt(sessionStorage.getItem('maxUploadSize') || '15');
+    var deleteAllowed = sessionStorage.getItem('deleteAllowed') === 'true';
+    var sdFreeSpace = 0;
+    var pollTimer = null;
+
+    maxSizeInput.value = maxUploadSize;
+    startPageSelect.value = localStorage.getItem('startPage') || 'player';
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+      return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+
+    function escHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    // Settings dialog
+    settingsBtn.addEventListener('click', function() {
+      deleteAllowedToggle.checked = deleteAllowed;
+      startPageSelect.value = localStorage.getItem('startPage') || 'player';
+      settingsDialog.classList.add('show');
+      fetch('/storage-info').then(function(r) { return r.json(); }).then(function(data) {
+        document.getElementById('sdTotal').textContent = formatBytes(data.total);
+        document.getElementById('sdUsed').textContent = formatBytes(data.used);
+        document.getElementById('sdFree').textContent = formatBytes(data.free);
+        sdFreeSpace = data.free;
+      }).catch(function() {});
+    });
+
+    document.getElementById('btnSaveSettings').addEventListener('click', function() {
+      var val = parseInt(maxSizeInput.value);
+      if (val >= 1 && val <= 100) {
+        maxUploadSize = val;
+        sessionStorage.setItem('maxUploadSize', val.toString());
+        deleteAllowed = deleteAllowedToggle.checked;
+        sessionStorage.setItem('deleteAllowed', deleteAllowed.toString());
+        localStorage.setItem('startPage', startPageSelect.value);
+        settingsDialog.classList.remove('show');
+      } else {
+        alert('Enter a value between 1 and 100');
+      }
+    });
+
+    document.getElementById('btnCloseSettings').addEventListener('click', function() {
+      maxSizeInput.value = maxUploadSize;
+      deleteAllowedToggle.checked = deleteAllowed;
+      settingsDialog.classList.remove('show');
+    });
+
+    settingsDialog.addEventListener('click', function(e) {
+      if (e.target === settingsDialog) {
+        maxSizeInput.value = maxUploadSize;
+        deleteAllowedToggle.checked = deleteAllowed;
+        settingsDialog.classList.remove('show');
+      }
+    });
+
+    // Player
+    var currentFolder = '';
+    var hasFolders = false;
+
+    function loadPlayerStatus() {
+      fetch('/api/status').then(function(r) { return r.json(); }).then(function(d) {
+        document.getElementById('playerStatusText').textContent = d.playing ? 'Playing...' : 'Stopped';
+        document.getElementById('playerStatusText').style.color = d.playing ? '#51cf66' : '#868e96';
+        document.getElementById('playerFile').textContent = d.file || '-';
+        var items = document.querySelectorAll('.playlist-item');
+        for (var i = 0; i < items.length; i++) {
+          items[i].classList.toggle('current', items[i].dataset.idx == d.index && d.playing);
+        }
+      }).catch(function() {
+        document.getElementById('playerStatusText').textContent = 'Connection error';
+        document.getElementById('playerStatusText').style.color = '#fa5252';
+      });
+    }
+
+    function renderFolders(folders) {
+      var sel = document.getElementById('folderSelector');
+      var fl = document.getElementById('folderList');
+      if (folders.length === 0 && !currentFolder) {
+        sel.style.display = 'none';
+        hasFolders = false;
+        return;
+      }
+      hasFolders = true;
+      sel.style.display = 'block';
+      var h = '';
+      if (currentFolder) {
+        var curThumb = '';
+        for (var j = 0; j < folders.length; j++) {
+          if ((folders[j].name || folders[j]) === currentFolder) { curThumb = folders[j].thumb || ''; break; }
+        }
+        h += '<div class="folder-back-row"><span class="folder-back" onclick="selectFolder(\'\')">&#x2190;</span></div>';
+        h += '<div class="folder-grid">';
+        h += '<div class="folder-card current">';
+        h += '<div class="folder-thumb">';
+        if (curThumb) {
+          h += '<img src="/preview?file=' + encodeURIComponent(curThumb) + '" onerror="this.parentNode.innerHTML=\'<span class=thumb-blank>&#x25A0;</span>\'">';
+        } else {
+          h += '<span class="thumb-blank">&#x25A0;</span>';
+        }
+        h += '</div>';
+        h += '<div class="folder-card-name">' + escHtml(currentFolder) + '</div>';
+        h += '</div></div>';
+      } else {
+        h += '<div class="folder-grid">';
+        for (var i = 0; i < folders.length; i++) {
+          var f = folders[i];
+          var name = f.name || f;
+          var thumb = f.thumb || '';
+          h += '<div class="folder-card" onclick="selectFolder(\'' + escHtml(name) + '\')">';
+          h += '<div class="folder-thumb">';
+          if (thumb) {
+            h += '<img src="/preview?file=' + encodeURIComponent(thumb) + '" onerror="this.parentNode.innerHTML=\'<span class=thumb-blank>&#x25A0;</span>\'">';
+          } else {
+            h += '<span class="thumb-blank">&#x25A0;</span>';
+          }
+          h += '</div>';
+          h += '<div class="folder-card-name">' + escHtml(name) + '</div>';
+          h += '</div>';
+        }
+        h += '</div>';
+      }
+      fl.innerHTML = h;
+    }
+
+    function loadPlayerPlaylist() {
+      fetch('/api/playlist').then(function(r) { return r.json(); }).then(function(data) {
+        currentFolder = data.folder || '';
+        var list = data.files || [];
+        var folders = data.folders || [];
+        renderFolders(folders);
+        var h = '';
+        if (list.length === 0) {
+          if (folders.length > 0 && !currentFolder) {
+            h = '<div class="no-files">Select a folder above</div>';
+          } else {
+            h = '<div class="no-files">No MP4 files found</div>';
+          }
+        }
+        for (var i = 0; i < list.length; i++) {
+          h += '<div class="playlist-item" data-idx="' + i + '" onclick="playIdx(' + i + ')">';
+          h += '<span class="pl-name">' + escHtml(list[i]) + '</span>';
+          h += '<span class="pl-icon">&#x25B6;</span></div>';
+        }
+        document.getElementById('playerPlaylist').innerHTML = h;
+        loadPlayerStatus();
+      }).catch(function() {
+        document.getElementById('playerPlaylist').innerHTML = '<div class="no-files" style="color:#fa5252">Failed to load</div>';
+      });
+    }
+
+    function selectFolder(name) {
+      fetch('/api/folder?name=' + encodeURIComponent(name), { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function() { loadPlayerPlaylist(); })
+        .catch(function() {});
+    }
+
+    function playerApi(url) {
+      fetch(url, { method: 'POST' }).then(function(r) { return r.json(); }).then(function() {
+        setTimeout(loadPlayerStatus, 300);
+      }).catch(function() {});
+    }
+
+    function playIdx(i) {
+      fetch('/api/play?index=' + i, { method: 'POST' }).then(function(r) { return r.json(); }).then(function() {
+        setTimeout(loadPlayerStatus, 500);
+      });
+    }
+
+    // Start polling
+    loadPlayerPlaylist();
+    pollTimer = setInterval(loadPlayerStatus, 3000);
+
+    // Pause polling when page is hidden
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      } else {
+        loadPlayerStatus();
+        if (!pollTimer) pollTimer = setInterval(loadPlayerStatus, 3000);
+      }
+    });
+  </script>
+</body>
+</html>
+)rawliteral";
+
 // SSR HTML template for file browser page.
 // Markers (replaced by browse_handler via chunked response):
 //   <!--BACK_BTN-->       back button HTML (empty string or <a> tag)
@@ -447,6 +1094,22 @@ const char HTML_TEMPLATE[] = R"rawliteral(
       display: flex;
       gap: 8px;
     }
+    .nav-btn {
+      background: #4dabf7;
+      color: #fff;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+    .nav-btn:active {
+      transform: scale(0.98);
+    }
     .toggle-switch {
       position: relative;
       width: 50px;
@@ -519,95 +1182,16 @@ const char HTML_TEMPLATE[] = R"rawliteral(
       color: #495057;
       font-size: 16px;
     }
-    .player-btn {
-      background: #4dabf7;
-      color: #fff;
-      border: none;
-      padding: 10px 14px;
-      border-radius: 10px;
-      cursor: pointer;
-      font-size: 16px;
-      font-weight: bold;
-    }
-    .player-btn:active {
-      transform: scale(0.98);
-    }
-    .player-status {
-      text-align: center;
-      padding: 8px 0 12px;
-    }
-    .player-status-text {
+    .start-page-select {
+      padding: 8px 12px;
       font-size: 14px;
-      color: #868e96;
-    }
-    .player-file {
-      font-size: 16px;
-      font-weight: bold;
-      color: #ff6b6b;
-      margin-top: 4px;
-      word-break: break-all;
-    }
-    .player-controls {
-      display: flex;
-      justify-content: center;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-    .player-ctrl-btn {
-      background: #e9ecef;
-      border: none;
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      cursor: pointer;
-      font-size: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .player-ctrl-btn:active {
-      background: #ff6b6b;
-      color: #fff;
-    }
-    .player-ctrl-btn.play-btn {
-      background: #ff6b6b;
-      color: #fff;
-      width: 56px;
-      height: 56px;
-      font-size: 24px;
-    }
-    .player-ctrl-btn.play-btn:active {
-      background: #e85050;
-    }
-    .playlist-section {
-      max-height: 250px;
-      overflow-y: auto;
-      text-align: left;
-    }
-    .playlist-item {
-      padding: 10px 12px;
-      margin: 4px 0;
-      background: #f8f9fa;
+      border: 2px solid #e9ecef;
       border-radius: 8px;
-      cursor: pointer;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
+      background: #fff;
     }
-    .playlist-item:active {
-      background: #e9ecef;
-    }
-    .playlist-item.current {
-      border-left: 3px solid #ff6b6b;
-      font-weight: bold;
-    }
-    .playlist-item .pl-name {
-      flex: 1;
-      word-break: break-all;
-    }
-    .playlist-item .pl-icon {
-      color: #ff6b6b;
-      margin-left: 8px;
+    .start-page-select:focus {
+      outline: none;
+      border-color: #4dabf7;
     }
   </style>
 </head>
@@ -615,9 +1199,9 @@ const char HTML_TEMPLATE[] = R"rawliteral(
   <div class="header-row">
     <h1>MP4 Player</h1>
     <div class="header-buttons">
-      <button class="player-btn" id="playerBtn">&#x1F3AC;</button>
+      <a class="nav-btn" href="/player">&#x1F3AC;</a>
       <button class="settings-btn" id="settingsBtn">&#x2699;&#xFE0F;</button>
-      <button class="upload-toggle" id="uploadToggle">&#x2B06; Upload</button>
+      <button class="upload-toggle" id="uploadToggle">Upload</button>
     </div>
   </div>
   <div class="upload-area" id="dropZone">
@@ -715,28 +1299,16 @@ const char HTML_TEMPLATE[] = R"rawliteral(
           <span class="toggle-slider"></span>
         </label>
       </div>
+      <div class="settings-row">
+        <span class="settings-label">Start Page</span>
+        <select class="start-page-select" id="startPageSelect">
+          <option value="player">Player</option>
+          <option value="browse">File Browser</option>
+        </select>
+      </div>
       <div class="dialog-buttons" style="margin-top:16px;">
         <button class="dialog-btn btn-save" id="btnSaveSettings">Save</button>
         <button class="dialog-btn btn-cancel" id="btnCloseSettings">Close</button>
-      </div>
-    </div>
-  </div>
-  <div class="dialog-overlay" id="playerDialog">
-    <div class="dialog" style="max-width:360px">
-      <h3>Player</h3>
-      <div class="player-status">
-        <div class="player-status-text" id="playerStatusText">Loading...</div>
-        <div class="player-file" id="playerFile">-</div>
-      </div>
-      <div class="player-controls">
-        <button class="player-ctrl-btn" onclick="playerApi('/api/prev')">&#x23EE;</button>
-        <button class="player-ctrl-btn" onclick="playerApi('/api/stop')">&#x23F9;</button>
-        <button class="player-ctrl-btn play-btn" onclick="playerApi('/api/play')">&#x25B6;</button>
-        <button class="player-ctrl-btn" onclick="playerApi('/api/next')">&#x23ED;</button>
-      </div>
-      <div class="playlist-section" id="playerPlaylist"></div>
-      <div class="dialog-buttons" style="margin-top:16px">
-        <button class="dialog-btn btn-cancel" onclick="closePlayerDialog()">Close</button>
       </div>
     </div>
   </div>
@@ -752,6 +1324,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
     var settingsBtn = document.getElementById('settingsBtn');
     var maxSizeInput = document.getElementById('maxSizeInput');
     var deleteAllowedToggle = document.getElementById('deleteAllowedToggle');
+    var startPageSelect = document.getElementById('startPageSelect');
     var btnDelete = document.getElementById('btnDelete');
     var btnRename = document.getElementById('btnRename');
     var btnPreview = document.getElementById('btnPreview');
@@ -796,6 +1369,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
     }
 
     maxSizeInput.value = maxUploadSize;
+    startPageSelect.value = localStorage.getItem('startPage') || 'player';
 
     function formatBytes(bytes) {
       if (bytes < 1024) return bytes + ' B';
@@ -807,6 +1381,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
     // Settings dialog
     settingsBtn.addEventListener('click', function() {
       deleteAllowedToggle.checked = deleteAllowed;
+      startPageSelect.value = localStorage.getItem('startPage') || 'player';
       settingsDialog.classList.add('show');
       fetch('/storage-info').then(function(r) { return r.json(); }).then(function(data) {
         document.getElementById('sdTotal').textContent = formatBytes(data.total);
@@ -823,6 +1398,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
         sessionStorage.setItem('maxUploadSize', val.toString());
         deleteAllowed = deleteAllowedToggle.checked;
         sessionStorage.setItem('deleteAllowed', deleteAllowed.toString());
+        localStorage.setItem('startPage', startPageSelect.value);
         updateManageUI();
         settingsDialog.classList.remove('show');
       } else {
@@ -1182,77 +1758,6 @@ const char HTML_TEMPLATE[] = R"rawliteral(
           });
         });
       })(navLinks[li]);
-    }
-
-    // Player dialog
-    var playerDialog = document.getElementById('playerDialog');
-    var playerPollTimer = null;
-
-    document.getElementById('playerBtn').addEventListener('click', function() {
-      playerDialog.classList.add('show');
-      loadPlayerStatus();
-      loadPlayerPlaylist();
-    });
-
-    playerDialog.addEventListener('click', function(e) {
-      if (e.target === playerDialog) closePlayerDialog();
-    });
-
-    function closePlayerDialog() {
-      playerDialog.classList.remove('show');
-      if (playerPollTimer) { clearInterval(playerPollTimer); playerPollTimer = null; }
-    }
-
-    function escHtml(s) {
-      var d = document.createElement('div');
-      d.textContent = s;
-      return d.innerHTML;
-    }
-
-    function loadPlayerStatus() {
-      fetch('/api/status').then(function(r) { return r.json(); }).then(function(d) {
-        document.getElementById('playerStatusText').textContent = d.playing ? 'Playing...' : 'Stopped';
-        document.getElementById('playerStatusText').style.color = d.playing ? '#51cf66' : '#868e96';
-        document.getElementById('playerFile').textContent = d.file || '-';
-        var items = document.querySelectorAll('.playlist-item');
-        for (var i = 0; i < items.length; i++) {
-          items[i].classList.toggle('current', items[i].dataset.idx == d.index && d.playing);
-        }
-      }).catch(function() {
-        document.getElementById('playerStatusText').textContent = 'Connection error';
-        document.getElementById('playerStatusText').style.color = '#fa5252';
-      });
-      if (!playerPollTimer) {
-        playerPollTimer = setInterval(loadPlayerStatus, 3000);
-      }
-    }
-
-    function loadPlayerPlaylist() {
-      fetch('/api/playlist').then(function(r) { return r.json(); }).then(function(list) {
-        var h = '';
-        if (list.length === 0) h = '<div style="text-align:center;color:#868e96;padding:16px;font-size:14px">No MP4 files found</div>';
-        for (var i = 0; i < list.length; i++) {
-          h += '<div class="playlist-item" data-idx="' + i + '" onclick="playIdx(' + i + ')">';
-          h += '<span class="pl-name">' + escHtml(list[i]) + '</span>';
-          h += '<span class="pl-icon">&#x25B6;</span></div>';
-        }
-        document.getElementById('playerPlaylist').innerHTML = h;
-        loadPlayerStatus();
-      }).catch(function() {
-        document.getElementById('playerPlaylist').innerHTML = '<div style="text-align:center;color:#fa5252;padding:16px;font-size:14px">Failed to load</div>';
-      });
-    }
-
-    function playerApi(url) {
-      fetch(url, { method: 'POST' }).then(function(r) { return r.json(); }).then(function() {
-        setTimeout(loadPlayerStatus, 300);
-      }).catch(function() {});
-    }
-
-    function playIdx(i) {
-      fetch('/api/play?index=' + i, { method: 'POST' }).then(function(r) { return r.json(); }).then(function() {
-        setTimeout(loadPlayerStatus, 500);
-      });
     }
   </script>
 </body>

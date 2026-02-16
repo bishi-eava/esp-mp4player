@@ -19,12 +19,15 @@ private:
     void start_http_server();
     void show_connection_info();
 
-    // SSR file browser
+    // Page handlers
+    static esp_err_t index_redirect_handler(httpd_req_t *req);
+    static esp_err_t player_handler(httpd_req_t *req);
     static esp_err_t browse_handler(httpd_req_t *req);
 
     // Player control handlers
     static esp_err_t status_handler(httpd_req_t *req);
     static esp_err_t playlist_handler(httpd_req_t *req);
+    static esp_err_t folder_handler(httpd_req_t *req);
     static esp_err_t play_handler(httpd_req_t *req);
     static esp_err_t stop_handler(httpd_req_t *req);
     static esp_err_t next_handler(httpd_req_t *req);
