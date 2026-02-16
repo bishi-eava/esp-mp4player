@@ -24,7 +24,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MP4 Player</title>
+  <title>Movie Player</title>
   <style>
     * {
       box-sizing: border-box;
@@ -109,6 +109,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     .player-controls {
       display: flex;
       justify-content: center;
+      align-items: center;
       gap: 12px;
       margin-bottom: 16px;
     }
@@ -228,11 +229,15 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     .folder-card.current .folder-card-name {
       color: #e8590c;
     }
-    .folder-back-row {
+    .folder-current-row {
+      position: relative;
+      text-align: center;
       margin-bottom: 8px;
     }
     .folder-back {
-      display: inline-block;
+      position: absolute;
+      left: 0;
+      top: 0;
       padding: 8px 16px;
       background: #e9ecef;
       border-radius: 8px;
@@ -243,6 +248,13 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     }
     .folder-back:active {
       background: #dee2e6;
+    }
+    .folder-current-info {
+      display: inline-block;
+    }
+    .folder-current-info .folder-thumb {
+      width: 160px;
+      margin: 0 auto;
     }
     .dialog-overlay {
       display: none;
@@ -384,9 +396,9 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 </head>
 <body>
   <div class="header-row">
-    <h1>MP4 Player</h1>
+    <h1>Movie Player</h1>
     <div class="header-buttons">
-      <a class="nav-btn" href="/browse">&#x1F4C2;</a>
+      <a class="nav-btn" id="browseBtn" href="/browse">&#x1F4C2;</a>
       <button class="settings-btn" id="settingsBtn">&#x2699;&#xFE0F;</button>
     </div>
   </div>
@@ -426,24 +438,6 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         <span class="settings-value" id="sdFree">-</span>
       </div>
       <div class="settings-row">
-        <span class="settings-label">Upload Limit</span>
-        <span><input type="number" class="settings-input" id="maxSizeInput" min="1" max="100"> MB</span>
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">Allow Management</span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="deleteAllowedToggle">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">Start Page</span>
-        <select class="start-page-select" id="startPageSelect">
-          <option value="player">Player</option>
-          <option value="browse">File Browser</option>
-        </select>
-      </div>
-      <div class="settings-row">
         <span class="settings-label">Sync Mode</span>
         <label class="toggle-switch">
           <input type="checkbox" id="syncModeToggle" checked>
@@ -451,26 +445,39 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         </label>
         <span class="settings-value" id="syncModeLabel" style="margin-left:8px;font-size:12px;">Audio Priority</span>
       </div>
+      <div class="settings-row">
+        <span class="settings-label">Start Page</span>
+        <select class="start-page-select" id="startPageSelect">
+          <option value="player">Movie Player</option>
+          <option value="browse">File Browser</option>
+        </select>
+      </div>
       <div class="dialog-buttons" style="margin-top:16px;">
         <button class="dialog-btn btn-save" id="btnSaveSettings">Save</button>
         <button class="dialog-btn btn-cancel" id="btnCloseSettings">Close</button>
       </div>
     </div>
   </div>
+  <div class="dialog-overlay" id="stopConfirmDialog">
+    <div class="dialog">
+      <h3>Stop playback and open File Browser?</h3>
+      <div class="dialog-buttons">
+        <button class="dialog-btn btn-save" id="btnStopConfirm">Stop &amp; Browse</button>
+        <button class="dialog-btn btn-cancel" id="btnStopCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
   <script>
     var settingsDialog = document.getElementById('settingsDialog');
     var settingsBtn = document.getElementById('settingsBtn');
-    var maxSizeInput = document.getElementById('maxSizeInput');
-    var deleteAllowedToggle = document.getElementById('deleteAllowedToggle');
     var startPageSelect = document.getElementById('startPageSelect');
     var syncModeToggle = document.getElementById('syncModeToggle');
     var syncModeLabel = document.getElementById('syncModeLabel');
-    var maxUploadSize = parseInt(sessionStorage.getItem('maxUploadSize') || '15');
-    var deleteAllowed = sessionStorage.getItem('deleteAllowed') === 'true';
-    var sdFreeSpace = 0;
     var pollTimer = null;
+    var isPlaying = false;
+    var stopConfirmDialog = document.getElementById('stopConfirmDialog');
+    var browseBtn = document.getElementById('browseBtn');
 
-    maxSizeInput.value = maxUploadSize;
     startPageSelect.value = localStorage.getItem('startPage') || 'player';
 
     function formatBytes(bytes) {
@@ -488,43 +495,50 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 
     // Settings dialog
     settingsBtn.addEventListener('click', function() {
-      deleteAllowedToggle.checked = deleteAllowed;
       startPageSelect.value = localStorage.getItem('startPage') || 'player';
       settingsDialog.classList.add('show');
       fetch('/storage-info').then(function(r) { return r.json(); }).then(function(data) {
         document.getElementById('sdTotal').textContent = formatBytes(data.total);
         document.getElementById('sdUsed').textContent = formatBytes(data.used);
         document.getElementById('sdFree').textContent = formatBytes(data.free);
-        sdFreeSpace = data.free;
       }).catch(function() {});
     });
 
     document.getElementById('btnSaveSettings').addEventListener('click', function() {
-      var val = parseInt(maxSizeInput.value);
-      if (val >= 1 && val <= 100) {
-        maxUploadSize = val;
-        sessionStorage.setItem('maxUploadSize', val.toString());
-        deleteAllowed = deleteAllowedToggle.checked;
-        sessionStorage.setItem('deleteAllowed', deleteAllowed.toString());
-        localStorage.setItem('startPage', startPageSelect.value);
-        settingsDialog.classList.remove('show');
-      } else {
-        alert('Enter a value between 1 and 100');
-      }
+      localStorage.setItem('startPage', startPageSelect.value);
+      settingsDialog.classList.remove('show');
     });
 
     document.getElementById('btnCloseSettings').addEventListener('click', function() {
-      maxSizeInput.value = maxUploadSize;
-      deleteAllowedToggle.checked = deleteAllowed;
       settingsDialog.classList.remove('show');
     });
 
     settingsDialog.addEventListener('click', function(e) {
-      if (e.target === settingsDialog) {
-        maxSizeInput.value = maxUploadSize;
-        deleteAllowedToggle.checked = deleteAllowed;
-        settingsDialog.classList.remove('show');
+      if (e.target === settingsDialog) settingsDialog.classList.remove('show');
+    });
+
+    browseBtn.addEventListener('click', function(e) {
+      if (isPlaying) {
+        e.preventDefault();
+        stopConfirmDialog.classList.add('show');
       }
+    });
+
+    document.getElementById('btnStopConfirm').addEventListener('click', function() {
+      stopConfirmDialog.classList.remove('show');
+      fetch('/api/stop', {method:'POST'}).then(function() {
+        window.location.href = '/browse';
+      }).catch(function() {
+        window.location.href = '/browse';
+      });
+    });
+
+    document.getElementById('btnStopCancel').addEventListener('click', function() {
+      stopConfirmDialog.classList.remove('show');
+    });
+
+    stopConfirmDialog.addEventListener('click', function(e) {
+      if (e.target === stopConfirmDialog) stopConfirmDialog.classList.remove('show');
     });
 
     syncModeToggle.addEventListener('change', function() {
@@ -545,6 +559,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 
     function loadPlayerStatus() {
       fetch('/api/status').then(function(r) { return r.json(); }).then(function(d) {
+        isPlaying = d.playing;
         document.getElementById('playerStatusText').textContent = d.playing ? 'Playing...' : 'Stopped';
         document.getElementById('playerStatusText').style.color = d.playing ? '#51cf66' : '#868e96';
         document.getElementById('playerFile').textContent = d.file || '-';
@@ -575,9 +590,9 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         for (var j = 0; j < folders.length; j++) {
           if ((folders[j].name || folders[j]) === currentFolder) { curThumb = folders[j].thumb || ''; break; }
         }
-        h += '<div class="folder-back-row"><span class="folder-back" onclick="selectFolder(\'\')">&#x2190;</span></div>';
-        h += '<div class="folder-grid">';
-        h += '<div class="folder-card current">';
+        h += '<div class="folder-current-row">';
+        h += '<span class="folder-back" onclick="selectFolder(\'\')">&#x2190;</span>';
+        h += '<div class="folder-current-info">';
         h += '<div class="folder-thumb">';
         if (curThumb) {
           h += '<img src="/preview?file=' + encodeURIComponent(curThumb) + '" onerror="this.parentNode.innerHTML=\'<span class=thumb-blank>&#x25A0;</span>\'">';
@@ -585,7 +600,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
           h += '<span class="thumb-blank">&#x25A0;</span>';
         }
         h += '</div>';
-        h += '<div class="folder-card-name">' + escHtml(currentFolder) + '</div>';
+        h += '<div class="folder-card-name" style="color:#e8590c">' + escHtml(currentFolder) + '</div>';
         h += '</div></div>';
       } else {
         h += '<div class="folder-grid">';
@@ -685,7 +700,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MP4 Player</title>
+  <title>File Browser</title>
   <style>
     * {
       box-sizing: border-box;
@@ -1220,7 +1235,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
 </head>
 <body>
   <div class="header-row">
-    <h1>MP4 Player</h1>
+    <h1>File Browser</h1>
     <div class="header-buttons">
       <a class="nav-btn" href="/player">&#x1F3AC;</a>
       <button class="settings-btn" id="settingsBtn">&#x2699;&#xFE0F;</button>
@@ -1325,7 +1340,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
       <div class="settings-row">
         <span class="settings-label">Start Page</span>
         <select class="start-page-select" id="startPageSelect">
-          <option value="player">Player</option>
+          <option value="player">Movie Player</option>
           <option value="browse">File Browser</option>
         </select>
       </div>

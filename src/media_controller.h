@@ -54,6 +54,7 @@ private:
     std::string current_folder_;
     int current_index_ = -1;
     bool audio_priority_ = true;
+    bool user_stopped_ = false;
 
     Mp4Player *player_ = nullptr;
 };

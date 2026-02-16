@@ -225,6 +225,7 @@ void MediaController::stop()
 {
     if (player_) {
         ESP_LOGI(TAG, "Stop requested");
+        user_stopped_ = true;
         player_->request_stop();
     }
 }
@@ -274,6 +275,13 @@ void MediaController::tick()
         player_->wait_until_finished();
         delete player_;
         player_ = nullptr;
+
+        // Don't auto-advance if user explicitly stopped
+        if (user_stopped_) {
+            user_stopped_ = false;
+            ESP_LOGI(TAG, "User stopped, not auto-advancing");
+            return;
+        }
 
         // Auto-advance to next file in playlist
         if (!playlist_.empty()) {
