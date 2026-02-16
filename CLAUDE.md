@@ -201,6 +201,13 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | POST | `/mkdir?path=/&name=dir` | フォルダ作成 |
 | GET | `/storage-info` | `{total, used, free}` |
 
+### PSRAM 割り当てモード (重要)
+全ボードで `CONFIG_SPIRAM_USE_MALLOC=y` を使用（`CAPS_ALLOC` ではない）。
+`ALWAYSINTERNAL=4096` により 4KB超の `malloc()` は自動的にPSRAMを使用。
+H.264デコーダのフレームバッファ（ソース解像度に比例）がPSRAMに確保され、
+AAC デコーダ等の内部RAMが不足しない。
+**注意:** `USE_MALLOC` と `USE_CAPS_ALLOC` は排他的choice。両方書くと後者が優先される。
+
 ### WiFi メモリ最適化 (sdkconfig)
 ```
 CONFIG_ESP_WIFI_IRAM_OPT=n
