@@ -10,4 +10,8 @@ idf_component_register(
         vfs
         esp_timer
         esp_audio_codec
+        esp_http_server
+        esp_wifi
+        esp_netif
+        nvs_flash
 )

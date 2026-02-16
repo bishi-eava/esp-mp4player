@@ -22,6 +22,13 @@ dependencies:
     - esp32s3
     - esp32p4
     version: 1.2.0~1
+  espressif/qrcode:
+    component_hash: 31e70991ce22f28d73a4386417fc9c0993f61e1aab1832474fd9e3db8da9dcbd
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.2.0
   idf:
     source:
       type: idf
@@ -37,8 +44,9 @@ dependencies:
 direct_dependencies:
 - espressif/esp_audio_codec
 - espressif/esp_h264
+- espressif/qrcode
 - idf
 - lovyanGFX
-manifest_hash: ca06248090aa5e1842e28f52a3c8d806e889ee387307658fc7bc0e592fd44a0d
+manifest_hash: e677c0c48cb233ad3a128c33df9c5a99f823329ab65694bb2262805c586c47f5
 target: esp32s3
 version: 2.0.0

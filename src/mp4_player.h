@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "board_config.h"
@@ -51,13 +52,23 @@ struct PipelineSync {
     SemaphoreHandle_t decode_ready  = nullptr;
     SemaphoreHandle_t display_done  = nullptr;
     volatile bool     pipeline_eos  = false;
+    volatile bool     stop_requested = false;
+    volatile bool     audio_priority = false;
 
 #ifdef BOARD_HAS_AUDIO
     QueueHandle_t     audio_queue   = nullptr;
     volatile bool     audio_eos     = false;
+    volatile int      audio_volume  = 256;  // 0–256, 256=full volume
 #endif
 
     bool init() {
+        pipeline_eos   = false;
+        stop_requested = false;
+        audio_priority = false;
+#ifdef BOARD_HAS_AUDIO
+        audio_eos      = false;
+        audio_volume   = 256;
+#endif
         nal_queue    = xQueueCreate(kNalQueueDepth, sizeof(FrameMsg));
         decode_ready = xSemaphoreCreateBinary();
         display_done = xSemaphoreCreateBinary();
@@ -65,6 +76,15 @@ struct PipelineSync {
         audio_queue  = xQueueCreate(kAudioQueueDepth, sizeof(AudioMsg));
 #endif
         return nal_queue && decode_ready && display_done;
+    }
+
+    void deinit() {
+        if (nal_queue)    { vQueueDelete(nal_queue);       nal_queue    = nullptr; }
+        if (decode_ready) { vSemaphoreDelete(decode_ready); decode_ready = nullptr; }
+        if (display_done) { vSemaphoreDelete(display_done); display_done = nullptr; }
+#ifdef BOARD_HAS_AUDIO
+        if (audio_queue)  { vQueueDelete(audio_queue);     audio_queue  = nullptr; }
+#endif
     }
 };
 
@@ -130,6 +150,7 @@ public:
 private:
     void run();
     bool send_nal(const uint8_t *data, int size, int64_t pts_us, bool is_sps_pps);
+    bool send_video_frame(const uint8_t *data, int size, int64_t pts_us);
 #ifdef BOARD_HAS_AUDIO
     bool send_audio(const uint8_t *data, int size, int64_t pts_us);
 #endif
@@ -206,17 +227,36 @@ public:
     Mp4Player(LGFX &display, const char *filepath)
         : display_(display), filepath_(filepath) {}
 
+    void set_audio_priority(bool v) { audio_priority_ = v; }
+    void set_volume(int vol) {
+        volume_ = vol;
+#ifdef BOARD_HAS_AUDIO
+        sync_.audio_volume = vol * 256 / 100;
+#endif
+    }
     void start();
+    void request_stop();
+    bool is_finished() const;
+    void wait_until_finished();
 
 private:
     LGFX         &display_;
     const char   *filepath_;
+    bool          audio_priority_ = true;
+    int           volume_ = 100;
 
     PipelineSync  sync_;
     VideoInfo     video_info_;
     DoubleBuffer  dbuf_;
 #ifdef BOARD_HAS_AUDIO
     AudioInfo     audio_info_;
+#endif
+
+    TaskHandle_t  demux_handle_   = nullptr;
+    TaskHandle_t  decode_handle_  = nullptr;
+    TaskHandle_t  display_handle_ = nullptr;
+#ifdef BOARD_HAS_AUDIO
+    TaskHandle_t  audio_handle_   = nullptr;
 #endif
 };
 
