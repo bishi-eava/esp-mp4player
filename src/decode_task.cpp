@@ -171,14 +171,15 @@ void DecodeStage::run()
 
             psram_free(msg.data);
 
-            // PTS timing: delay only when ahead of schedule
+            // PTS timing
             if (!msg.is_sps_pps && msg.pts_us > 0) {
                 int64_t elapsed_us = esp_timer_get_time() - start_time;
                 int64_t delay_us = msg.pts_us - elapsed_us;
                 if (delay_us > 1000) {
                     vTaskDelay(pdMS_TO_TICKS(delay_us / 1000));
+                } else if (!sync_.audio_priority) {
+                    vTaskDelay(1);  // full_video: yield CPU when behind
                 }
-                // behind schedule: no delay, proceed immediately
             }
         }
 

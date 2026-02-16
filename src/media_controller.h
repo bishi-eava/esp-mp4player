@@ -31,6 +31,10 @@ public:
     bool next();
     bool prev();
 
+    // Sync mode
+    void set_audio_priority(bool v) { audio_priority_ = v; }
+    bool get_audio_priority() const { return audio_priority_; }
+
     // State
     bool is_playing() const;
     int current_index() const { return current_index_; }
@@ -49,6 +53,7 @@ private:
     std::vector<FolderInfo> subfolders_;
     std::string current_folder_;
     int current_index_ = -1;
+    bool audio_priority_ = true;
 
     Mp4Player *player_ = nullptr;
 };

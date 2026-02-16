@@ -205,6 +205,7 @@ bool MediaController::play(int index)
     snprintf(path_buf, sizeof(path_buf), "%s", filepath.c_str());
 
     player_ = new Mp4Player(display_, path_buf);
+    player_->set_audio_priority(audio_priority_);
     player_->start();
     return true;
 }

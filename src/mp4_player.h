@@ -53,6 +53,7 @@ struct PipelineSync {
     SemaphoreHandle_t display_done  = nullptr;
     volatile bool     pipeline_eos  = false;
     volatile bool     stop_requested = false;
+    volatile bool     audio_priority = false;
 
 #ifdef BOARD_HAS_AUDIO
     QueueHandle_t     audio_queue   = nullptr;
@@ -62,6 +63,7 @@ struct PipelineSync {
     bool init() {
         pipeline_eos   = false;
         stop_requested = false;
+        audio_priority = false;
 #ifdef BOARD_HAS_AUDIO
         audio_eos      = false;
 #endif
@@ -223,6 +225,7 @@ public:
     Mp4Player(LGFX &display, const char *filepath)
         : display_(display), filepath_(filepath) {}
 
+    void set_audio_priority(bool v) { audio_priority_ = v; }
     void start();
     void request_stop();
     bool is_finished() const;
@@ -231,6 +234,7 @@ public:
 private:
     LGFX         &display_;
     const char   *filepath_;
+    bool          audio_priority_ = true;
 
     PipelineSync  sync_;
     VideoInfo     video_info_;

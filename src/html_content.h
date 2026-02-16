@@ -396,10 +396,10 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
       <div class="player-file" id="playerFile">-</div>
     </div>
     <div class="player-controls">
-      <button class="player-ctrl-btn" onclick="playerApi('/api/prev')">&#x23EE;</button>
-      <button class="player-ctrl-btn" onclick="playerApi('/api/stop')">&#x23F9;</button>
-      <button class="player-ctrl-btn play-btn" onclick="playerApi('/api/play')">&#x25B6;</button>
-      <button class="player-ctrl-btn" onclick="playerApi('/api/next')">&#x23ED;</button>
+      <button class="player-ctrl-btn" onclick="playerApi('/api/prev')">&#x23EE;&#xFE0E;</button>
+      <button class="player-ctrl-btn" onclick="playerApi('/api/stop')">&#x23F9;&#xFE0E;</button>
+      <button class="player-ctrl-btn play-btn" onclick="playerApi('/api/play')">&#x25B6;&#xFE0E;</button>
+      <button class="player-ctrl-btn" onclick="playerApi('/api/next')">&#x23ED;&#xFE0E;</button>
     </div>
     <div class="folder-selector" id="folderSelector" style="display:none">
       <p class="section-title">Folders</p>
@@ -443,6 +443,14 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
           <option value="browse">File Browser</option>
         </select>
       </div>
+      <div class="settings-row">
+        <span class="settings-label">Sync Mode</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="syncModeToggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="settings-value" id="syncModeLabel" style="margin-left:8px;font-size:12px;">Audio Priority</span>
+      </div>
       <div class="dialog-buttons" style="margin-top:16px;">
         <button class="dialog-btn btn-save" id="btnSaveSettings">Save</button>
         <button class="dialog-btn btn-cancel" id="btnCloseSettings">Close</button>
@@ -455,6 +463,8 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     var maxSizeInput = document.getElementById('maxSizeInput');
     var deleteAllowedToggle = document.getElementById('deleteAllowedToggle');
     var startPageSelect = document.getElementById('startPageSelect');
+    var syncModeToggle = document.getElementById('syncModeToggle');
+    var syncModeLabel = document.getElementById('syncModeLabel');
     var maxUploadSize = parseInt(sessionStorage.getItem('maxUploadSize') || '15');
     var deleteAllowed = sessionStorage.getItem('deleteAllowed') === 'true';
     var sdFreeSpace = 0;
@@ -517,6 +527,18 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
       }
     });
 
+    syncModeToggle.addEventListener('change', function() {
+      var mode = syncModeToggle.checked ? 'audio' : 'video';
+      syncModeLabel.textContent = syncModeToggle.checked ? 'Audio Priority' : 'Full Video';
+      fetch('/api/sync-mode?mode=' + mode, {method:'POST'}).catch(function(){});
+    });
+
+    function updateSyncModeUI(mode) {
+      var isAudio = (mode === 'audio');
+      syncModeToggle.checked = isAudio;
+      syncModeLabel.textContent = isAudio ? 'Audio Priority' : 'Full Video';
+    }
+
     // Player
     var currentFolder = '';
     var hasFolders = false;
@@ -526,6 +548,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         document.getElementById('playerStatusText').textContent = d.playing ? 'Playing...' : 'Stopped';
         document.getElementById('playerStatusText').style.color = d.playing ? '#51cf66' : '#868e96';
         document.getElementById('playerFile').textContent = d.file || '-';
+        if (d.sync_mode) updateSyncModeUI(d.sync_mode);
         var items = document.querySelectorAll('.playlist-item');
         for (var i = 0; i < items.length; i++) {
           items[i].classList.toggle('current', items[i].dataset.idx == d.index && d.playing);
@@ -603,7 +626,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         for (var i = 0; i < list.length; i++) {
           h += '<div class="playlist-item" data-idx="' + i + '" onclick="playIdx(' + i + ')">';
           h += '<span class="pl-name">' + escHtml(list[i]) + '</span>';
-          h += '<span class="pl-icon">&#x25B6;</span></div>';
+          h += '<span class="pl-icon">&#x25B6;&#xFE0E;</span></div>';
         }
         document.getElementById('playerPlaylist').innerHTML = h;
         loadPlayerStatus();

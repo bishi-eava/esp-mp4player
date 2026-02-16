@@ -153,6 +153,7 @@ namespace mp4 {
 void Mp4Player::start()
 {
     sync_.init();
+    sync_.audio_priority = audio_priority_;
 
     auto *demux = new DemuxStage(filepath_, sync_, video_info_
 #ifdef BOARD_HAS_AUDIO

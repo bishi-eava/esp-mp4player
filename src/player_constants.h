@@ -23,7 +23,7 @@ constexpr int kDisplayCore = 0;
 constexpr int kAudioCore   = 0;
 
 // --- Queue depths ---
-constexpr int kNalQueueDepth   = 4;
+constexpr int kNalQueueDepth   = 16;
 constexpr int kAudioQueueDepth = 8;
 
 // --- Buffer sizes ---
@@ -41,7 +41,7 @@ constexpr int kI2sDmaFrameNum = 512;
 
 // --- Timeout durations (ms) ---
 constexpr int kQueueSendTimeoutMs  = 5000;
-constexpr int kVideoSendTimeoutMs  = 0;     // demux: non-blocking video send (skip if queue full)
+constexpr int kVideoSendTimeoutMs  = 100;   // demux: wait up to 100ms for queue space before skipping
 constexpr int kQueueRecvTimeoutMs  = 10000;
 constexpr int kAudioRecvTimeoutMs  = 5000;
 
@@ -66,6 +66,6 @@ constexpr int kApMaxConnections     = 2;
 // --- HTTP server config ---
 constexpr size_t kHttpServerStack   = 8 * 1024;
 constexpr size_t kHttpScratchSize   = 8 * 1024;
-constexpr int kHttpMaxUriHandlers   = 18;
+constexpr int kHttpMaxUriHandlers   = 19;
 
 }  // namespace mp4
