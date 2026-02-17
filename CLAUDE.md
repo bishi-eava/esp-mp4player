@@ -189,7 +189,7 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 ### REST API
 | Method | Path | 説明 |
 |---|---|---|
-| GET | `/` | リダイレクト（localStorage優先、未設定時はserver.configのstart_page） |
+| GET | `/` | リダイレクト（server.configのstart_pageへ302） |
 | GET | `/player` | プレイヤーページ |
 | GET | `/browse` | ファイルブラウザページ |
 | GET | `/api/status` | `{playing, file, index, total, folder, sync_mode, volume}` |
@@ -199,6 +199,9 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | POST | `/api/stop` | 再生停止 |
 | POST | `/api/next` / `/api/prev` | 次/前の動画 |
 | POST | `/api/volume?vol=N` | 音量設定 (0–100) |
+| POST | `/api/sync-mode?mode=audio\|video` | A/V同期モード切替 |
+| POST | `/api/start-page?page=player\|browse` | 初期ページ設定（server.configに保存） |
+| POST | `/api/save-player-config` | プレイヤー設定保存（volume, sync_mode, folderをplayer.configに） |
 | GET | `/download?file=/path` | ファイルダウンロード |
 | GET | `/preview?file=/path` | ファイルプレビュー |
 | POST | `/upload?path=/&filename=xxx` | アップロード（Raw POST body） |
@@ -225,6 +228,25 @@ start_page=player
 - `key=value` 形式。空行・`#` 始まりの行はスキップ
 - 未指定のキーはデフォルト値を使用
 - SD初期化後・WiFi起動前に読み込み（`load_server_config()`）
+
+### player.config（プレイヤー設定ファイル）
+`/sdcard/playlist/player.config` にテキストファイルを置くとプレイヤー設定を永続化できる。ファイルがなければデフォルト値を使用。
+Web UIから設定を変更すると自動的にファイルに保存される。
+```
+volume=80
+sync_mode=audio
+folder=anime
+```
+| キー | デフォルト値 | 説明 |
+|---|---|---|
+| volume | 100 | 音量 (0–100) |
+| sync_mode | audio | A/V同期モード (`audio` or `video`) |
+| folder | (空) | プレイリストサブフォルダ名（空=ルート） |
+
+- 音量: スライダーリリース時に自動保存
+- Sync mode: トグル変更時に自動保存
+- フォルダ: Web UI の「Set Default」ボタンで明示的に保存
+- 起動時に `folder` が設定されていれば自動的にそのフォルダを選択して再生開始
 
 ### PSRAM 割り当てモード (重要)
 全ボードで `CONFIG_SPIRAM_USE_MALLOC=y` を使用（`CAPS_ALLOC` ではない）。

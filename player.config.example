@@ -1,0 +1,14 @@
+# ESP32-S3 MP4 Player - Player Configuration
+# Place this file at /sdcard/playlist/player.config on the SD card.
+# Lines starting with # are comments. Blank lines are ignored.
+# Missing keys use default values.
+# Settings are auto-saved when changed via the Web UI.
+
+# Volume (0-100, default: 100)
+volume=100
+
+# A/V sync mode: "audio" = audio priority, "video" = full video (default: audio)
+sync_mode=audio
+
+# Playlist subfolder name (default: empty = root of /sdcard/playlist/)
+folder=

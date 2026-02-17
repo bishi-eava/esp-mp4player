@@ -255,7 +255,9 @@ void FileServer::start_http_server()
 
     // Settings API
     httpd_uri_t startpage_uri = { .uri = "/api/start-page", .method = HTTP_POST, .handler = start_page_handler, .user_ctx = this };
+    httpd_uri_t save_pcfg_uri = { .uri = "/api/save-player-config", .method = HTTP_POST, .handler = save_player_config_handler, .user_ctx = this };
     httpd_register_uri_handler(server_, &startpage_uri);
+    httpd_register_uri_handler(server_, &save_pcfg_uri);
 
     // File management endpoints (matching reference repo paths)
     httpd_uri_t download_uri = { .uri = "/download",     .method = HTTP_GET,  .handler = download_handler, .user_ctx = this };
@@ -511,9 +513,10 @@ esp_err_t FileServer::playlist_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "application/json");
 
-    // Send: {"folder":"...","files":[...],"folders":[...]}
+    // Send: {"folder":"...","default_folder":"...","files":[...],"folders":[...]}
     char header[300];
-    snprintf(header, sizeof(header), "{\"folder\":\"%s\",\"files\":[", ctrl.current_folder().c_str());
+    snprintf(header, sizeof(header), "{\"folder\":\"%s\",\"default_folder\":\"%s\",\"files\":[",
+             ctrl.current_folder().c_str(), ctrl.saved_folder());
     httpd_resp_sendstr_chunk(req, header);
 
     for (size_t i = 0; i < playlist.size(); i++) {
@@ -675,6 +678,16 @@ esp_err_t FileServer::start_page_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+esp_err_t FileServer::save_player_config_handler(httpd_req_t *req)
+{
+    auto *self = static_cast<FileServer *>(req->user_ctx);
+    self->controller_.save_config();
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
 // ---- File management handlers ----
 
 const char *FileServer::get_content_type(const char *filepath)
@@ -690,7 +703,7 @@ const char *FileServer::get_content_type(const char *filepath)
     if (strcasecmp(ext, "xml") == 0)  return "text/xml";
     if (strcasecmp(ext, "txt") == 0 || strcasecmp(ext, "csv") == 0 ||
         strcasecmp(ext, "log") == 0 || strcasecmp(ext, "md") == 0 ||
-        strcasecmp(ext, "ini") == 0 || strcasecmp(ext, "cfg") == 0 ||
+        strcasecmp(ext, "ini") == 0 || strcasecmp(ext, "cfg") == 0 || strcasecmp(ext, "config") == 0 ||
         strcasecmp(ext, "yaml") == 0 || strcasecmp(ext, "yml") == 0 ||
         strcasecmp(ext, "py") == 0 || strcasecmp(ext, "c") == 0 ||
         strcasecmp(ext, "cpp") == 0 || strcasecmp(ext, "h") == 0 ||
