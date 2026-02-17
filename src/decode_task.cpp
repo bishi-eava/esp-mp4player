@@ -21,6 +21,8 @@ void DecodeStage::task_func(void *arg)
 {
     auto *self = static_cast<DecodeStage *>(arg);
     self->run();
+    xEventGroupSetBits(self->sync_.task_done, PipelineSync::kDecodeDone);
+    delete self;
     vTaskDelete(nullptr);
 }
 
@@ -58,11 +60,17 @@ void DecodeStage::run()
 {
     ESP_LOGI(TAG, "decode_task started");
 
-    // Wait for demux_task to set video dimensions
-    FrameMsg first_msg;
-    if (xQueuePeek(sync_.nal_queue, &first_msg, portMAX_DELAY) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed waiting for first frame from demux");
-        goto signal_eos;
+    // Wait for demux_task to set video dimensions (with stop check)
+    {
+        FrameMsg first_msg;
+        bool got_msg = false;
+        while (!got_msg && !sync_.stop_requested) {
+            got_msg = (xQueuePeek(sync_.nal_queue, &first_msg, pdMS_TO_TICKS(500)) == pdTRUE);
+        }
+        if (!got_msg) {
+            ESP_LOGI(TAG, "Stop requested before first frame arrived");
+            goto signal_eos;
+        }
     }
 
     {
@@ -118,12 +126,18 @@ void DecodeStage::run()
         unsigned decoded_frames = 0;
         unsigned skipped_frames = 0;
         int64_t start_time = esp_timer_get_time();
+        bool stopped = false;
 
         FrameMsg msg;
         while (true) {
-            if (xQueueReceive(sync_.nal_queue, &msg, pdMS_TO_TICKS(kQueueRecvTimeoutMs)) != pdTRUE) {
-                ESP_LOGW(TAG, "Queue receive timeout");
-                continue;
+            if (sync_.stop_requested) {
+                ESP_LOGI(TAG, "Stop requested, exiting decode loop");
+                stopped = true;
+                break;
+            }
+
+            if (xQueueReceive(sync_.nal_queue, &msg, pdMS_TO_TICKS(500)) != pdTRUE) {
+                continue;  // will re-check stop_requested at top
             }
 
             if (msg.eos) {
@@ -153,7 +167,14 @@ void DecodeStage::run()
                 in_frame.raw_data.len -= in_frame.consume;
 
                 if (out_frame.out_size > 0 && out_frame.outbuf) {
-                    xSemaphoreTake(sync_.display_done, portMAX_DELAY);
+                    // Wait for display with stop check
+                    while (xSemaphoreTake(sync_.display_done, pdMS_TO_TICKS(100)) != pdTRUE) {
+                        if (sync_.stop_requested) {
+                            psram_free(msg.data);
+                            stopped = true;
+                            goto exit_decode;
+                        }
+                    }
 
                     if (needs_scaling) {
                         i420_to_rgb565_scaled(out_frame.outbuf, dbuf_.write_buf(),
@@ -171,8 +192,8 @@ void DecodeStage::run()
 
             psram_free(msg.data);
 
-            // PTS timing
-            if (!msg.is_sps_pps && msg.pts_us > 0) {
+            // PTS timing (skip if stopping)
+            if (!sync_.stop_requested && !msg.is_sps_pps && msg.pts_us > 0) {
                 int64_t elapsed_us = esp_timer_get_time() - start_time;
                 int64_t delay_us = msg.pts_us - elapsed_us;
                 if (delay_us > 1000) {
@@ -183,7 +204,10 @@ void DecodeStage::run()
             }
         }
 
-        xSemaphoreTake(sync_.display_done, pdMS_TO_TICKS(kFinalDisplayWaitMs));
+    exit_decode:
+        if (!stopped) {
+            xSemaphoreTake(sync_.display_done, pdMS_TO_TICKS(kFinalDisplayWaitMs));
+        }
 
         int64_t total_time_us = esp_timer_get_time() - start_time;
         float total_time_s = total_time_us / 1000000.0f;

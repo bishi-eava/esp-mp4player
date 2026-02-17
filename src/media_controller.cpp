@@ -258,7 +258,55 @@ void MediaController::select_folder(const char *name)
     }
 }
 
+// --- Thread-safe command posting (called from HTTP handlers) ---
+
+void MediaController::post_play(int index)
+{
+    PlayerCmd cmd = {};
+    cmd.type = CmdType::PlayIndex;
+    cmd.index = index;
+    xQueueSend(cmd_queue_, &cmd, 0);
+}
+
+void MediaController::post_play_file(const char *filename)
+{
+    PlayerCmd cmd = {};
+    cmd.type = CmdType::PlayFile;
+    strlcpy(cmd.filename, filename, sizeof(cmd.filename));
+    xQueueSend(cmd_queue_, &cmd, 0);
+}
+
+void MediaController::post_stop()
+{
+    PlayerCmd cmd = {};
+    cmd.type = CmdType::Stop;
+    xQueueSend(cmd_queue_, &cmd, 0);
+}
+
+void MediaController::post_next()
+{
+    PlayerCmd cmd = {};
+    cmd.type = CmdType::Next;
+    xQueueSend(cmd_queue_, &cmd, 0);
+}
+
+void MediaController::post_prev()
+{
+    PlayerCmd cmd = {};
+    cmd.type = CmdType::Prev;
+    xQueueSend(cmd_queue_, &cmd, 0);
+}
+
+// --- Direct playback (main thread only, used by app_main) ---
+
 bool MediaController::play(int index)
+{
+    return play_internal(index);
+}
+
+// --- Internal playback controls (main thread only) ---
+
+bool MediaController::play_internal(int index)
 {
     if (index < 0 || index >= (int)playlist_.size()) {
         ESP_LOGE(TAG, "Invalid playlist index: %d", index);
@@ -266,9 +314,7 @@ bool MediaController::play(int index)
     }
 
     // Stop current playback if any
-    if (player_) {
-        stop_and_wait();
-    }
+    stop_and_wait();
 
     current_index_ = index;
     std::string filepath = std::string(kSdMountPoint) + kPlaylistFolder;
@@ -286,26 +332,28 @@ bool MediaController::play(int index)
     player_->set_audio_priority(audio_priority_);
     player_->set_volume(volume_);
     player_->start();
+    playing_ = true;
     return true;
 }
 
-bool MediaController::play(const char *filename)
+bool MediaController::play_internal_by_name(const char *filename)
 {
     for (int i = 0; i < (int)playlist_.size(); i++) {
         if (playlist_[i] == filename) {
-            return play(i);
+            return play_internal(i);
         }
     }
     ESP_LOGE(TAG, "File not in playlist: %s", filename);
     return false;
 }
 
-void MediaController::stop()
+void MediaController::stop_internal()
 {
     if (player_) {
         ESP_LOGI(TAG, "Stop requested");
         user_stopped_ = true;
-        player_->request_stop();
+        stop_and_wait();
+        playing_ = false;
     }
 }
 
@@ -327,27 +375,23 @@ void MediaController::stop_and_wait()
     player_->wait_until_finished();
     delete player_;
     player_ = nullptr;
+    playing_ = false;
     ESP_LOGI(TAG, "Player stopped and cleaned up");
 }
 
-bool MediaController::next()
+bool MediaController::next_internal()
 {
     if (playlist_.empty()) return false;
     int next_idx = (current_index_ + 1) % (int)playlist_.size();
-    return play(next_idx);
+    return play_internal(next_idx);
 }
 
-bool MediaController::prev()
+bool MediaController::prev_internal()
 {
     if (playlist_.empty()) return false;
     int prev_idx = current_index_ - 1;
     if (prev_idx < 0) prev_idx = (int)playlist_.size() - 1;
-    return play(prev_idx);
-}
-
-bool MediaController::is_playing() const
-{
-    return player_ && !player_->is_finished();
+    return play_internal(prev_idx);
 }
 
 const char *MediaController::current_file() const
@@ -356,14 +400,46 @@ const char *MediaController::current_file() const
     return playlist_[current_index_].c_str();
 }
 
+void MediaController::process_commands()
+{
+    PlayerCmd cmd;
+    while (xQueueReceive(cmd_queue_, &cmd, 0) == pdTRUE) {
+        switch (cmd.type) {
+        case CmdType::PlayIndex:
+            user_stopped_ = false;
+            play_internal(cmd.index);
+            break;
+        case CmdType::PlayFile:
+            user_stopped_ = false;
+            play_internal_by_name(cmd.filename);
+            break;
+        case CmdType::Stop:
+            stop_internal();
+            break;
+        case CmdType::Next:
+            user_stopped_ = false;
+            next_internal();
+            break;
+        case CmdType::Prev:
+            user_stopped_ = false;
+            prev_internal();
+            break;
+        }
+    }
+}
+
 void MediaController::tick()
 {
+    // Process commands from HTTP handlers (main thread only)
+    process_commands();
+
     if (player_ && player_->is_finished()) {
         ESP_LOGI(TAG, "Playback finished: %s", current_file());
         // Clean up the finished player
         player_->wait_until_finished();
         delete player_;
         player_ = nullptr;
+        playing_ = false;
 
         // Don't auto-advance if user explicitly stopped
         if (user_stopped_) {
@@ -377,7 +453,7 @@ void MediaController::tick()
             int next_idx = current_index_ + 1;
             if (next_idx < (int)playlist_.size()) {
                 ESP_LOGI(TAG, "Auto-advancing to next: [%d]", next_idx);
-                play(next_idx);
+                play_internal(next_idx);
             } else {
                 ESP_LOGI(TAG, "Playlist finished (reached end)");
             }

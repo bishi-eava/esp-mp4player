@@ -3,6 +3,8 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "lcd_config.h"
 #include "mp4_player.h"
 
@@ -28,14 +30,30 @@ struct FolderInfo {
     std::string thumb;  // relative path to first image (e.g. "/PLAYLIST/sub/img.jpg"), empty if none
 };
 
+// Commands posted from HTTP handlers, processed by tick() on main thread
+enum class CmdType : uint8_t {
+    PlayIndex,
+    PlayFile,
+    Stop,
+    Next,
+    Prev,
+};
+
+struct PlayerCmd {
+    CmdType type;
+    int index;
+    char filename[64];
+};
+
 class MediaController {
 public:
     MediaController(LGFX &display, const PlayerConfig &config)
         : display_(display), player_config_(config)
         , audio_priority_(strcmp(config.sync_mode, "video") != 0)
-        , volume_(config.volume) {}
+        , volume_(config.volume)
+        , cmd_queue_(xQueueCreate(4, sizeof(PlayerCmd))) {}
 
-    // Playlist
+    // Playlist (main thread only)
     void scan_playlist();
     void rescan();
     void select_folder(const char *name);
@@ -43,23 +61,26 @@ public:
     const std::vector<FolderInfo> &subfolders() const { return subfolders_; }
     const std::string &current_folder() const { return current_folder_; }
 
-    // Playback controls
+    // Thread-safe command posting (called from HTTP handlers)
+    void post_play(int index);
+    void post_play_file(const char *filename);
+    void post_stop();
+    void post_next();
+    void post_prev();
+
+    // Direct playback (main thread only, used by app_main)
     bool play(int index);
-    bool play(const char *filename);
-    void stop();
-    bool next();
-    bool prev();
 
     // Sync mode
     void set_audio_priority(bool v) { audio_priority_ = v; }
     bool get_audio_priority() const { return audio_priority_; }
 
-    // Volume (0–100)
+    // Volume (0–100), safe from any thread (volatile write)
     void set_volume(int vol);
     int get_volume() const { return volume_; }
 
-    // State
-    bool is_playing() const;
+    // State queries (safe from any thread via simple flag reads)
+    bool is_playing() const { return playing_; }
     int current_index() const { return current_index_; }
     const char *current_file() const;
 
@@ -69,11 +90,17 @@ public:
     // Persist current settings to player.config
     void save_config();
 
-    // Call from main loop to detect playback completion
+    // Call from main loop — processes queued commands and detects playback completion
     void tick();
 
 private:
+    void process_commands();
+    bool play_internal(int index);
+    bool play_internal_by_name(const char *filename);
+    void stop_internal();
     void stop_and_wait();
+    bool next_internal();
+    bool prev_internal();
     void scan_mp4_files(const char *dirpath);
     void scan_subfolders();
 
@@ -84,9 +111,11 @@ private:
     std::string current_folder_;
     int current_index_ = -1;
     bool audio_priority_ = true;
+    volatile bool playing_ = false;
     bool user_stopped_ = false;
     int volume_ = 100;
 
+    QueueHandle_t cmd_queue_ = nullptr;
     Mp4Player *player_ = nullptr;
 };
 

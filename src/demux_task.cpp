@@ -42,6 +42,8 @@ void DemuxStage::task_func(void *arg)
 {
     auto *self = static_cast<DemuxStage *>(arg);
     self->run();
+    xEventGroupSetBits(self->sync_.task_done, PipelineSync::kDemuxDone);
+    delete self;
     vTaskDelete(nullptr);
 }
 
@@ -156,18 +158,27 @@ bool DemuxStage::send_audio(const uint8_t *data, int size, int64_t pts_us)
 
 void DemuxStage::send_eos()
 {
+    // Use short timeout — if queues are full during stop, downstream
+    // stages will detect stop_requested and exit on their own.
+    const TickType_t eos_timeout = pdMS_TO_TICKS(200);
 #ifdef BOARD_HAS_AUDIO
     if (sync_.audio_queue) {
         AudioMsg aeos = {};
         aeos.eos = true;
-        xQueueSend(sync_.audio_queue, &aeos, portMAX_DELAY);
-        ESP_LOGI(TAG, "Audio EOS sent");
+        if (xQueueSend(sync_.audio_queue, &aeos, eos_timeout) == pdTRUE) {
+            ESP_LOGI(TAG, "Audio EOS sent");
+        } else {
+            ESP_LOGW(TAG, "Audio EOS send timed out (stop in progress)");
+        }
     }
 #endif
     FrameMsg eos = {};
     eos.eos = true;
-    xQueueSend(sync_.nal_queue, &eos, portMAX_DELAY);
-    ESP_LOGI(TAG, "EOS sent, exiting");
+    if (xQueueSend(sync_.nal_queue, &eos, eos_timeout) == pdTRUE) {
+        ESP_LOGI(TAG, "Video EOS sent");
+    } else {
+        ESP_LOGW(TAG, "Video EOS send timed out (stop in progress)");
+    }
 }
 
 void DemuxStage::run()

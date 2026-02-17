@@ -216,14 +216,22 @@ bool Mp4Player::is_finished() const
 
 void Mp4Player::wait_until_finished()
 {
-    // Wait for all tasks to self-delete by polling task state
-    while (!sync_.pipeline_eos) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-    // Give tasks time to fully exit after setting EOS
-    vTaskDelay(pdMS_TO_TICKS(200));
+    // Wait for all tasks to signal completion via EventGroup
+    EventBits_t wait_bits = PipelineSync::kDemuxDone |
+                            PipelineSync::kDecodeDone |
+                            PipelineSync::kDisplayDone;
+#ifdef BOARD_HAS_AUDIO
+    if (audio_handle_) wait_bits |= PipelineSync::kAudioDone;
+#endif
 
-    // Clean up pipeline resources for reuse
+    xEventGroupWaitBits(sync_.task_done, wait_bits,
+                        pdFALSE,   // don't clear bits
+                        pdTRUE,    // wait for ALL bits
+                        pdMS_TO_TICKS(10000));  // 10s safety timeout
+
+    // All tasks have completed their cleanup and set done bits.
+    // Between SetBits and vTaskDelete, tasks only free their own
+    // memory (delete self) — they no longer access shared state.
     sync_.deinit();
     demux_handle_   = nullptr;
     decode_handle_  = nullptr;

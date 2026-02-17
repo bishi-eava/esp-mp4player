@@ -571,24 +571,24 @@ esp_err_t FileServer::play_handler(httpd_req_t *req)
     get_decoded_query_param(query, "file", file_param, sizeof(file_param));
     get_decoded_query_param(query, "index", index_param, sizeof(index_param));
 
-    bool ok;
+    // Post command to main thread (non-blocking)
     if (strlen(file_param) > 0) {
-        ok = self->controller_.play(file_param);
+        self->controller_.post_play_file(file_param);
     } else if (strlen(index_param) > 0) {
-        ok = self->controller_.play(atoi(index_param));
+        self->controller_.post_play(atoi(index_param));
     } else {
-        ok = self->controller_.play(0);
+        self->controller_.post_play(0);
     }
 
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"play failed\"}");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
 }
 
 esp_err_t FileServer::stop_handler(httpd_req_t *req)
 {
     auto *self = static_cast<FileServer *>(req->user_ctx);
-    self->controller_.stop();
+    self->controller_.post_stop();
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -598,20 +598,20 @@ esp_err_t FileServer::stop_handler(httpd_req_t *req)
 esp_err_t FileServer::next_handler(httpd_req_t *req)
 {
     auto *self = static_cast<FileServer *>(req->user_ctx);
-    bool ok = self->controller_.next();
+    self->controller_.post_next();
 
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, ok ? "{\"ok\":true}" : "{\"ok\":false}");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
 }
 
 esp_err_t FileServer::prev_handler(httpd_req_t *req)
 {
     auto *self = static_cast<FileServer *>(req->user_ctx);
-    bool ok = self->controller_.prev();
+    self->controller_.post_prev();
 
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, ok ? "{\"ok\":true}" : "{\"ok\":false}");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
 }
 

@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/event_groups.h"
 #include "board_config.h"
 #include "lcd_config.h"
 #include "player_constants.h"
@@ -48,12 +49,21 @@ struct VideoInfo {
 };
 
 struct PipelineSync {
-    QueueHandle_t     nal_queue     = nullptr;
-    SemaphoreHandle_t decode_ready  = nullptr;
-    SemaphoreHandle_t display_done  = nullptr;
-    volatile bool     pipeline_eos  = false;
-    volatile bool     stop_requested = false;
-    volatile bool     audio_priority = false;
+    QueueHandle_t      nal_queue     = nullptr;
+    SemaphoreHandle_t  decode_ready  = nullptr;
+    SemaphoreHandle_t  display_done  = nullptr;
+    EventGroupHandle_t task_done     = nullptr;
+    volatile bool      pipeline_eos  = false;
+    volatile bool      stop_requested = false;
+    volatile bool      audio_priority = false;
+
+    // Bits for task completion tracking via EventGroup
+    static constexpr EventBits_t kDemuxDone   = (1 << 0);
+    static constexpr EventBits_t kDecodeDone  = (1 << 1);
+    static constexpr EventBits_t kDisplayDone = (1 << 2);
+    static constexpr EventBits_t kAudioDone   = (1 << 3);
+    static constexpr EventBits_t kAllDone     = kDemuxDone | kDecodeDone | kDisplayDone;
+    static constexpr EventBits_t kAllDoneAudio = kAllDone | kAudioDone;
 
 #ifdef BOARD_HAS_AUDIO
     QueueHandle_t     audio_queue   = nullptr;
@@ -72,18 +82,20 @@ struct PipelineSync {
         nal_queue    = xQueueCreate(kNalQueueDepth, sizeof(FrameMsg));
         decode_ready = xSemaphoreCreateBinary();
         display_done = xSemaphoreCreateBinary();
+        task_done    = xEventGroupCreate();
 #ifdef BOARD_HAS_AUDIO
         audio_queue  = xQueueCreate(kAudioQueueDepth, sizeof(AudioMsg));
 #endif
-        return nal_queue && decode_ready && display_done;
+        return nal_queue && decode_ready && display_done && task_done;
     }
 
     void deinit() {
-        if (nal_queue)    { vQueueDelete(nal_queue);       nal_queue    = nullptr; }
-        if (decode_ready) { vSemaphoreDelete(decode_ready); decode_ready = nullptr; }
-        if (display_done) { vSemaphoreDelete(display_done); display_done = nullptr; }
+        if (nal_queue)    { vQueueDelete(nal_queue);         nal_queue    = nullptr; }
+        if (decode_ready) { vSemaphoreDelete(decode_ready);  decode_ready = nullptr; }
+        if (display_done) { vSemaphoreDelete(display_done);  display_done = nullptr; }
+        if (task_done)    { vEventGroupDelete(task_done);    task_done    = nullptr; }
 #ifdef BOARD_HAS_AUDIO
-        if (audio_queue)  { vQueueDelete(audio_queue);     audio_queue  = nullptr; }
+        if (audio_queue)  { vQueueDelete(audio_queue);       audio_queue  = nullptr; }
 #endif
     }
 };
