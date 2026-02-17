@@ -71,15 +71,19 @@ Core 1                                Core 0
 | 構造体/クラス | 内容 |
 |---|---|
 | `VideoInfo` | video_w/h, scaled_w/h, display_x/y |
-| `PipelineSync` | nal_queue, audio_queue, セマフォ, EOSフラグ, stop_requested, audio_volume |
+| `PipelineSync` | nal_queue, audio_queue, セマフォ, EventGroup(task_done), EOSフラグ, stop_requested, audio_volume |
 | `DoubleBuffer` | RGB565ダブルバッファ（PSRAM, swap/read/write） |
 | `AudioInfo` | sample_rate, channels, DSI |
 
 ### 再生ライフサイクル管理
 - `MediaController` がプレイリスト(SD上の.mp4)と再生状態を管理
+- **コマンドキューパターン**: HTTPハンドラは `post_play()`/`post_stop()` 等でキューに投入、`tick()` がメインスレッドで一括処理
+  - `player_` へのアクセスはメインスレッドに集約（use-after-free/double-free防止）
 - `Mp4Player` に `request_stop()` / `is_finished()` / `wait_until_finished()` メソッド
-- `PipelineSync.stop_requested` フラグで DemuxStage のメインループを中断
-- DemuxStage が break → 既存の `send_eos()` で下流タスクが正常終了
+- `PipelineSync.stop_requested` フラグで **全ステージ**（Demux/Decode/Display/Audio）のループを中断
+- **EventGroup タスク完了追跡**: 各タスクが `xEventGroupSetBits()` → `wait_until_finished()` が `xEventGroupWaitBits()` で全タスク完了を保証
+- `send_eos()` は200msタイムアウト（停止中にキュー満杯でも無期限ブロックしない）
+- Stage オブジェクトは `task_func()` 内で `delete self` して自己解放
 
 ### 音声パイプライン (BOARD_HAS_AUDIO)
 - demux_taskが time-ordered interleaved demux でビデオ/オーディオフレームをPTS順に送信

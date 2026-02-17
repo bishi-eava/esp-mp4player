@@ -20,6 +20,10 @@ bool qrcodegen_getModule(const uint8_t qrcode[], int x, int y);
 
 namespace mp4 {
 
+// Background colors for QR cycle screens (RGB565)
+constexpr uint16_t kBgDarkGreen  = 0x0180;  // ~RGB(0, 48, 0)
+constexpr uint16_t kBgDarkOrange = 0x5100;  // ~RGB(80, 32, 0)
+
 constexpr int kQrMaxVersion = 10;
 
 // Draw a QR code centered at (cx, cy) within a max_size bounding box.
@@ -111,7 +115,7 @@ inline void show_wifi_connect_qr(LGFX &display, const char *ssid, const char *pa
     int w = display.width();
     int h = display.height();
 
-    display.fillScreen(TFT_BLACK);
+    display.fillScreen(kBgDarkGreen);
 
     char wifi_qr[128];
     if (password && strlen(password) > 0) {
@@ -130,14 +134,14 @@ inline void show_wifi_connect_qr(LGFX &display, const char *ssid, const char *pa
     int text_y = qr_area_h + 2;
 
     display.setTextSize(1);
-    display.setTextColor(TFT_GREEN, TFT_BLACK);
+    display.setTextColor(TFT_GREEN, kBgDarkGreen);
     const char *label = "Auto AP Connect";
     int tw = display.textWidth(label);
     display.setCursor((w - tw) / 2, text_y);
     display.print(label);
 
     text_y += font_h;
-    display.setTextColor(TFT_CYAN, TFT_BLACK);
+    display.setTextColor(TFT_CYAN, kBgDarkGreen);
     tw = display.textWidth(ssid);
     display.setCursor((w - tw) / 2, text_y);
     display.print(ssid);
@@ -149,7 +153,7 @@ inline void show_url_qr(LGFX &display, const char *url)
     int w = display.width();
     int h = display.height();
 
-    display.fillScreen(TFT_BLACK);
+    display.fillScreen(kBgDarkOrange);
 
     char url_str[128];
     snprintf(url_str, sizeof(url_str), "http://%s/", url);
@@ -164,14 +168,14 @@ inline void show_url_qr(LGFX &display, const char *url)
     int text_y = qr_area_h + 2;
 
     display.setTextSize(1);
-    display.setTextColor(TFT_GREEN, TFT_BLACK);
+    display.setTextColor(TFT_WHITE, kBgDarkOrange);
     const char *label = "App Page";
     int tw = display.textWidth(label);
     display.setCursor((w - tw) / 2, text_y);
     display.print(label);
 
     text_y += font_h;
-    display.setTextColor(TFT_CYAN, TFT_BLACK);
+    display.setTextColor(TFT_CYAN, kBgDarkOrange);
     tw = display.textWidth(url_str);
     display.setCursor((w - tw) / 2, text_y);
     display.print(url_str);
