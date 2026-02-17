@@ -1,0 +1,16 @@
+# ESP32-S3 MP4 Player - Server Configuration
+# Copy this file to /sdcard/server.config on the SD card.
+# Lines starting with # are comments. Blank lines are ignored.
+# Missing keys use default values.
+
+# WiFi AP SSID (default: esp-mp4player)
+ssid=esp-mp4player
+
+# WiFi AP password (default: 12345678, empty for open network)
+password=12345678
+
+# URL displayed on QR code / LCD (default: 192.168.4.1)
+url=192.168.4.1
+
+# Initial page: player or browse (default: player)
+start_page=player

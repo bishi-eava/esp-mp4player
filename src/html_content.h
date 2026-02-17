@@ -548,6 +548,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 
     document.getElementById('btnSaveSettings').addEventListener('click', function() {
       localStorage.setItem('startPage', startPageSelect.value);
+      fetch('/api/start-page?page=' + startPageSelect.value, {method:'POST'});
       settingsDialog.classList.remove('show');
     });
 
@@ -1497,6 +1498,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
         deleteAllowed = deleteAllowedToggle.checked;
         sessionStorage.setItem('deleteAllowed', deleteAllowed.toString());
         localStorage.setItem('startPage', startPageSelect.value);
+        fetch('/api/start-page?page=' + startPageSelect.value, {method:'POST'});
         updateManageUI();
         settingsDialog.classList.remove('show');
       } else {

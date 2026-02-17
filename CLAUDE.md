@@ -178,7 +178,8 @@ ffmpeg -i input.mp4 -vf "scale=128:128,fps=15" -c:v libx264 -profile:v baseline 
 WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再生操作とファイル管理を行える。
 
 ### アーキテクチャ
-- **WiFi AP**: WPA2, SSID="esp-mp4player", Password="12345678" (常時ON)
+- **WiFi AP**: WPA2, デフォルト SSID="esp-mp4player", Password="12345678" (常時ON)
+- **設定ファイル**: `/sdcard/server.config` で SSID/パスワード/URL/初期ページをカスタマイズ可能
 - **HTTP server**: `esp_http_server`、起動時に20個のURIハンドラ登録
 - **プレイリスト**: `/sdcard/playlist/` フォルダ内の .mp4 ファイルを順次再生。直下にmp4がない場合はサブフォルダを選択
 - **ハイブリッド起動**: WiFi起動 → playlistフォルダにmp4があれば自動再生 → ブラウザから操作可能
@@ -188,7 +189,7 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 ### REST API
 | Method | Path | 説明 |
 |---|---|---|
-| GET | `/` | リダイレクト（localStorage設定でplayer or browseへ） |
+| GET | `/` | リダイレクト（localStorage優先、未設定時はserver.configのstart_page） |
 | GET | `/player` | プレイヤーページ |
 | GET | `/browse` | ファイルブラウザページ |
 | GET | `/api/status` | `{playing, file, index, total, folder, sync_mode, volume}` |
@@ -205,6 +206,25 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | POST | `/rename?file=/path&name=new` | リネーム |
 | POST | `/mkdir?path=/&name=dir` | フォルダ作成 |
 | GET | `/storage-info` | `{total, used, free}` |
+
+### server.config（SDカード設定ファイル）
+`/sdcard/server.config` にテキストファイルを置くと WiFi AP/サーバー設定をカスタマイズできる。ファイルがなければデフォルト値を使用。
+```
+ssid=MyPlayer
+password=secret123
+url=192.168.4.1
+start_page=player
+```
+| キー | デフォルト値 | 説明 |
+|---|---|---|
+| ssid | esp-mp4player | WiFi AP の SSID |
+| password | 12345678 | WiFi AP のパスワード（空=オープン） |
+| url | 192.168.4.1 | QR/LCD に表示する接続先URL |
+| start_page | player | 初期ページ (`player` or `browse`) |
+
+- `key=value` 形式。空行・`#` 始まりの行はスキップ
+- 未指定のキーはデフォルト値を使用
+- SD初期化後・WiFi起動前に読み込み（`load_server_config()`）
 
 ### PSRAM 割り当てモード (重要)
 全ボードで `CONFIG_SPIRAM_USE_MALLOC=y` を使用（`CAPS_ALLOC` ではない）。

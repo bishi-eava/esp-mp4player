@@ -127,11 +127,14 @@ extern "C" void app_main(void)
     // MediaController manages playlist and playback lifecycle
     static mp4::MediaController controller(display);
 
+    // Load server config from SD card (defaults if file missing)
+    auto server_config = mp4::load_server_config("/sdcard/server.config");
+
     // WiFi AP + HTTP server (always on)
-    static mp4::FileServer server(display, controller);
+    static mp4::FileServer server(display, controller, server_config);
     server.start();
 
-    // Scan and auto-play
+    // Scan playlist
     controller.scan_playlist();
 
     if (!controller.playlist().empty()) {
@@ -139,7 +142,7 @@ extern "C" void app_main(void)
         controller.play(0);
     }
 
-    // Main loop: detect playback completion
+    // Main loop
     while (true) {
         controller.tick();
         vTaskDelay(pdMS_TO_TICKS(500));
