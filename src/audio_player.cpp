@@ -19,6 +19,8 @@ void AudioPipeline::task_func(void *arg)
 {
     auto *self = static_cast<AudioPipeline *>(arg);
     self->run();
+    xEventGroupSetBits(self->sync_.task_done, PipelineSync::kAudioDone);
+    delete self;
     vTaskDelete(nullptr);
 }
 
@@ -92,16 +94,22 @@ void AudioPipeline::run()
 
     ESP_LOGI(TAG, "audio_task: waiting for demux metadata...");
 
-    AudioMsg first_msg;
-    if (xQueuePeek(queue, &first_msg, portMAX_DELAY) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed waiting for first audio message");
-        goto cleanup;
-    }
+    {
+        AudioMsg first_msg;
+        bool got_msg = false;
+        while (!got_msg && !sync_.stop_requested) {
+            got_msg = (xQueuePeek(queue, &first_msg, pdMS_TO_TICKS(500)) == pdTRUE);
+        }
+        if (!got_msg) {
+            ESP_LOGI(TAG, "Stop requested before audio data arrived");
+            goto cleanup;
+        }
 
-    if (first_msg.eos) {
-        ESP_LOGI(TAG, "No audio data, exiting");
-        xQueueReceive(queue, &first_msg, 0);
-        goto cleanup;
+        if (first_msg.eos) {
+            ESP_LOGI(TAG, "No audio data, exiting");
+            xQueueReceive(queue, &first_msg, 0);
+            goto cleanup;
+        }
     }
 
     ESP_LOGI(TAG, "audio_task started: %u Hz, %u ch",
@@ -146,9 +154,13 @@ void AudioPipeline::run()
 
         AudioMsg msg;
         while (true) {
-            if (xQueueReceive(queue, &msg, pdMS_TO_TICKS(kAudioRecvTimeoutMs)) != pdTRUE) {
-                ESP_LOGW(TAG, "Audio queue receive timeout");
-                continue;
+            if (sync_.stop_requested) {
+                ESP_LOGI(TAG, "Stop requested, exiting audio loop");
+                break;
+            }
+
+            if (xQueueReceive(queue, &msg, pdMS_TO_TICKS(500)) != pdTRUE) {
+                continue;  // will re-check stop_requested at top
             }
 
             if (msg.eos) {
@@ -186,9 +198,17 @@ void AudioPipeline::run()
                 }
                 // vol==256: full volume, no scaling needed
 
+                // I2S write with stop check (avoid portMAX_DELAY blocking)
                 size_t bytes_written = 0;
-                i2s_channel_write(tx_chan_, pcm_buf, out_frame.decoded_size,
-                                  &bytes_written, portMAX_DELAY);
+                size_t remaining = out_frame.decoded_size;
+                uint8_t *ptr = pcm_buf;
+                while (remaining > 0 && !sync_.stop_requested) {
+                    size_t written = 0;
+                    i2s_channel_write(tx_chan_, ptr, remaining,
+                                      &written, pdMS_TO_TICKS(100));
+                    ptr += written;
+                    remaining -= written;
+                }
                 decoded_frames++;
             }
         }
