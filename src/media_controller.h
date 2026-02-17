@@ -60,6 +60,7 @@ public:
     const std::vector<std::string> &playlist() const { return playlist_; }
     const std::vector<FolderInfo> &subfolders() const { return subfolders_; }
     const std::string &current_folder() const { return current_folder_; }
+    const std::string &playing_folder() const { return playing_folder_; }
 
     // Thread-safe command posting (called from HTTP handlers)
     void post_play(int index);
@@ -109,6 +110,8 @@ private:
     std::vector<std::string> playlist_;
     std::vector<FolderInfo> subfolders_;
     std::string current_folder_;
+    std::string playing_folder_;
+    std::string playing_file_;
     int current_index_ = -1;
     bool audio_priority_ = true;
     volatile bool playing_ = false;

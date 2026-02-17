@@ -317,6 +317,8 @@ bool MediaController::play_internal(int index)
     stop_and_wait();
 
     current_index_ = index;
+    playing_folder_ = current_folder_;
+    playing_file_ = playlist_[index];
     std::string filepath = std::string(kSdMountPoint) + kPlaylistFolder;
     if (!current_folder_.empty()) {
         filepath += "/" + current_folder_;
@@ -396,8 +398,7 @@ bool MediaController::prev_internal()
 
 const char *MediaController::current_file() const
 {
-    if (current_index_ < 0 || current_index_ >= (int)playlist_.size()) return "";
-    return playlist_[current_index_].c_str();
+    return playing_file_.c_str();
 }
 
 void MediaController::process_commands()

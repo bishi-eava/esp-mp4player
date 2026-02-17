@@ -626,7 +626,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         isPlaying = d.playing;
         document.getElementById('playerStatusText').textContent = d.playing ? 'Playing...' : 'Stopped';
         document.getElementById('playerStatusText').style.color = d.playing ? '#51cf66' : '#868e96';
-        document.getElementById('playerFile').textContent = d.file || '-';
+        document.getElementById('playerFile').textContent = d.file ? (d.playing_folder ? d.playing_folder + '/' + d.file : d.file) : '-';
         if (d.sync_mode) updateSyncModeUI(d.sync_mode);
         if (d.volume !== undefined && volumeFromServer) {
           volumeSlider.value = d.volume;
@@ -634,7 +634,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         }
         var items = document.querySelectorAll('.playlist-item');
         for (var i = 0; i < items.length; i++) {
-          items[i].classList.toggle('current', items[i].dataset.idx == d.index && d.playing);
+          items[i].classList.toggle('current', items[i].dataset.idx == d.index && d.playing && currentFolder === (d.playing_folder || ''));
         }
       }).catch(function() {
         document.getElementById('playerStatusText').textContent = 'Connection error';

@@ -489,12 +489,13 @@ esp_err_t FileServer::status_handler(httpd_req_t *req)
 
     char buf[512];
     snprintf(buf, sizeof(buf),
-             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\",\"sync_mode\":\"%s\",\"volume\":%d,\"start_page\":\"%s\"}",
+             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\",\"playing_folder\":\"%s\",\"sync_mode\":\"%s\",\"volume\":%d,\"start_page\":\"%s\"}",
              ctrl.is_playing() ? "true" : "false",
              ctrl.current_file(),
              ctrl.current_index(),
              (int)ctrl.playlist().size(),
              ctrl.current_folder().c_str(),
+             ctrl.playing_folder().c_str(),
              ctrl.get_audio_priority() ? "audio" : "video",
              ctrl.get_volume(),
              self->config_.start_page);

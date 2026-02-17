@@ -77,6 +77,7 @@ Core 1                                Core 0
 
 ### 再生ライフサイクル管理
 - `MediaController` がプレイリスト(SD上の.mp4)と再生状態を管理
+- **閲覧/再生状態の分離**: `current_folder_`/`playlist_` は閲覧中のフォルダ、`playing_folder_`/`playing_file_` は再生中のファイルを保持。フォルダ切替で閲覧状態が変わっても再生状態は保持される
 - **コマンドキューパターン**: HTTPハンドラは `post_play()`/`post_stop()` 等でキューに投入、`tick()` がメインスレッドで一括処理
   - `player_` へのアクセスはメインスレッドに集約（use-after-free/double-free防止）
 - `Mp4Player` に `request_stop()` / `is_finished()` / `wait_until_finished()` メソッド
@@ -196,7 +197,7 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | GET | `/` | リダイレクト（server.configのstart_pageへ302） |
 | GET | `/player` | プレイヤーページ |
 | GET | `/browse` | ファイルブラウザページ |
-| GET | `/api/status` | `{playing, file, index, total, folder, sync_mode, volume}` |
+| GET | `/api/status` | `{playing, file, index, total, folder, playing_folder, sync_mode, volume}` |
 | GET | `/api/playlist` | `{folder, files:[], folders:[]}` |
 | POST | `/api/folder?name=xxx` | プレイリストフォルダ切替 |
 | POST | `/api/play?file=xxx` or `?index=N` | 再生開始 |
