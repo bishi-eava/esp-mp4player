@@ -7,6 +7,8 @@
 #include "mp4_player.h"
 #include "media_controller.h"
 #include "wifi_file_server.h"
+#include "qr_display.h"
+#include "player_constants.h"
 
 #ifdef BOARD_SD_MODE_SDMMC
 #include "driver/sdmmc_host.h"
@@ -141,14 +143,33 @@ extern "C" void app_main(void)
         controller.select_folder(player_config.folder);
     }
 
-    if (strcmp(server_config.start_page, "player") == 0 && !controller.playlist().empty()) {
+    bool auto_play = (strcmp(server_config.start_page, "player") == 0
+                      && !controller.playlist().empty());
+    bool qr_mode = !auto_play;
+
+    if (auto_play) {
         vTaskDelay(pdMS_TO_TICKS(mp4::kSplashDelayMs));
         controller.play(0);
     }
 
     // Main loop
+    int qr_tick = 0;
     while (true) {
         controller.tick();
+
+        if (qr_mode) {
+            if (controller.is_playing()) {
+                qr_mode = false;  // Playback started from Web UI — stop QR cycling permanently
+            } else if (qr_tick % mp4::kQrCycleIntervalTicks == 0) {
+                int screen = (qr_tick / mp4::kQrCycleIntervalTicks) % mp4::kQrScreenCount;
+                mp4::show_qr_cycle_screen(display, screen,
+                                           server_config.ssid,
+                                           server_config.password,
+                                           server_config.url);
+            }
+            qr_tick++;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }

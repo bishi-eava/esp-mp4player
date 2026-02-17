@@ -51,6 +51,8 @@ constexpr int kSemaphoreTimeoutMs  = 10000;
 constexpr int kFinalDisplayWaitMs  = 1000;
 constexpr int kBootDelayMs         = 5000;
 constexpr int kSplashDelayMs       = 500;
+constexpr int kQrCycleIntervalTicks = 10;  // 500ms * 10 = 5秒
+constexpr int kQrScreenCount        = 3;
 
 // --- SD card paths ---
 constexpr const char *kSdMountPoint = "/sdcard";
