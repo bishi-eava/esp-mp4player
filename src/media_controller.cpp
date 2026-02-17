@@ -317,21 +317,23 @@ bool MediaController::play_internal(int index)
         ESP_LOGE(TAG, "Invalid playlist index: %d", index);
         return false;
     }
+    playing_playlist_ = playlist_;
+    return start_playback(index, current_folder_, playlist_[index]);
+}
 
-    // Stop current playback if any
+bool MediaController::start_playback(int index, const std::string &folder, const std::string &filename)
+{
     stop_and_wait();
 
     current_index_ = index;
-    playing_folder_ = current_folder_;
-    playing_file_ = playlist_[index];
+    playing_folder_ = folder;
+    playing_file_ = filename;
+
     std::string filepath = std::string(kSdMountPoint) + kPlaylistFolder;
-    if (!current_folder_.empty()) {
-        filepath += "/" + current_folder_;
-    }
-    filepath += "/" + playlist_[index];
+    if (!folder.empty()) filepath += "/" + folder;
+    filepath += "/" + filename;
     ESP_LOGI(TAG, "Playing [%d]: %s", index, filepath.c_str());
 
-    // Filepath must persist — store in a static buffer
     static char path_buf[256];
     snprintf(path_buf, sizeof(path_buf), "%s", filepath.c_str());
 
@@ -361,6 +363,7 @@ void MediaController::stop_internal()
         user_stopped_ = true;
         stop_and_wait();
         playing_ = false;
+        playing_file_.clear();
     }
 }
 
@@ -454,17 +457,18 @@ void MediaController::tick()
             return;
         }
 
-        // Auto-advance to next file in playlist
-        if (!playlist_.empty()) {
+        // Auto-advance to next file in playing playlist
+        if (!playing_playlist_.empty()) {
             int next_idx = current_index_ + 1;
-            if (next_idx < (int)playlist_.size()) {
+            if (next_idx < (int)playing_playlist_.size()) {
                 ESP_LOGI(TAG, "Auto-advancing to next: [%d]", next_idx);
-                play_internal(next_idx);
+                start_playback(next_idx, playing_folder_, playing_playlist_[next_idx]);
             } else if (repeat_) {
                 ESP_LOGI(TAG, "Repeating playlist from beginning");
-                play_internal(0);
+                start_playback(0, playing_folder_, playing_playlist_[0]);
             } else {
                 ESP_LOGI(TAG, "Playlist finished (reached end)");
+                playing_file_.clear();
             }
         }
     }

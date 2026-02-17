@@ -104,6 +104,7 @@ private:
     void process_commands();
     bool play_internal(int index);
     bool play_internal_by_name(const char *filename);
+    bool start_playback(int index, const std::string &folder, const std::string &filename);
     void stop_internal();
     void stop_and_wait();
     bool next_internal();
@@ -118,6 +119,7 @@ private:
     std::string current_folder_;
     std::string playing_folder_;
     std::string playing_file_;
+    std::vector<std::string> playing_playlist_;
     int current_index_ = -1;
     bool audio_priority_ = true;
     bool repeat_ = false;
