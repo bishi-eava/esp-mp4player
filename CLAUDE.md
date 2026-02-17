@@ -83,6 +83,7 @@ Core 1                                Core 0
 - `Mp4Player` に `request_stop()` / `is_finished()` / `wait_until_finished()` メソッド
 - `PipelineSync.stop_requested` フラグで **全ステージ**（Demux/Decode/Display/Audio）のループを中断
 - **EventGroup タスク完了追跡**: 各タスクが `xEventGroupSetBits()` → `wait_until_finished()` が `xEventGroupWaitBits()` で全タスク完了を保証
+- **リピート再生**: `repeat_` フラグ ON で最後のファイル再生後にプレイリスト先頭から再開。Web UIトグルで切替、`player.config` に永続化
 - `send_eos()` は200msタイムアウト（停止中にキュー満杯でも無期限ブロックしない）
 - Stage オブジェクトは `task_func()` 内で `delete self` して自己解放
 
@@ -197,7 +198,7 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | GET | `/` | リダイレクト（server.configのstart_pageへ302） |
 | GET | `/player` | プレイヤーページ |
 | GET | `/browse` | ファイルブラウザページ |
-| GET | `/api/status` | `{playing, file, index, total, folder, playing_folder, sync_mode, volume}` |
+| GET | `/api/status` | `{playing, file, index, total, folder, playing_folder, sync_mode, repeat, volume}` |
 | GET | `/api/playlist` | `{folder, files:[], folders:[]}` |
 | POST | `/api/folder?name=xxx` | プレイリストフォルダ切替 |
 | POST | `/api/play?file=xxx` or `?index=N` | 再生開始 |
@@ -205,8 +206,9 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | POST | `/api/next` / `/api/prev` | 次/前の動画 |
 | POST | `/api/volume?vol=N` | 音量設定 (0–100) |
 | POST | `/api/sync-mode?mode=audio\|video` | A/V同期モード切替 |
+| POST | `/api/repeat?mode=on\|off` | リピート再生切替 |
 | POST | `/api/start-page?page=player\|browse` | 初期ページ設定（server.configに保存） |
-| POST | `/api/save-player-config` | プレイヤー設定保存（volume, sync_mode, folderをplayer.configに） |
+| POST | `/api/save-player-config` | プレイヤー設定保存（volume, sync_mode, repeat, folderをplayer.configに） |
 | GET | `/download?file=/path` | ファイルダウンロード |
 | GET | `/preview?file=/path` | ファイルプレビュー |
 | POST | `/upload?path=/&filename=xxx` | アップロード（Raw POST body） |
@@ -241,15 +243,18 @@ Web UIから設定を変更すると自動的にファイルに保存される�
 volume=80
 sync_mode=audio
 folder=anime
+repeat=on
 ```
 | キー | デフォルト値 | 説明 |
 |---|---|---|
 | volume | 100 | 音量 (0–100) |
 | sync_mode | audio | A/V同期モード (`audio` or `video`) |
 | folder | (空) | プレイリストサブフォルダ名（空=ルート） |
+| repeat | off | リピート再生 (`on` or `off`) |
 
 - 音量: スライダーリリース時に自動保存
 - Sync mode: トグル変更時に自動保存
+- Repeat: トグル変更時に自動保存
 - フォルダ: Web UI の「Set Default」ボタンで明示的に保存
 - 起動時に `folder` が設定されていれば自動的にそのフォルダを選択して再生開始
 

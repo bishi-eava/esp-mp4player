@@ -54,6 +54,7 @@ private:
     static esp_err_t next_handler(httpd_req_t *req);
     static esp_err_t prev_handler(httpd_req_t *req);
     static esp_err_t sync_mode_handler(httpd_req_t *req);
+    static esp_err_t repeat_handler(httpd_req_t *req);
     static esp_err_t volume_handler(httpd_req_t *req);
     static esp_err_t start_page_handler(httpd_req_t *req);
     static esp_err_t save_player_config_handler(httpd_req_t *req);

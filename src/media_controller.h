@@ -15,8 +15,9 @@ struct PlayerConfig {
     int volume;          // 0–100
     char sync_mode[8];   // "audio" or "video"
     char folder[64];     // playlist subfolder name (empty = root)
+    bool repeat;         // loop playlist when reaching end
 
-    PlayerConfig() : volume(100) {
+    PlayerConfig() : volume(100), repeat(false) {
         strlcpy(sync_mode, "audio", sizeof(sync_mode));
         folder[0] = '\0';
     }
@@ -50,6 +51,7 @@ public:
     MediaController(LGFX &display, const PlayerConfig &config)
         : display_(display), player_config_(config)
         , audio_priority_(strcmp(config.sync_mode, "video") != 0)
+        , repeat_(config.repeat)
         , volume_(config.volume)
         , cmd_queue_(xQueueCreate(4, sizeof(PlayerCmd))) {}
 
@@ -75,6 +77,10 @@ public:
     // Sync mode
     void set_audio_priority(bool v) { audio_priority_ = v; }
     bool get_audio_priority() const { return audio_priority_; }
+
+    // Repeat
+    void set_repeat(bool v) { repeat_ = v; }
+    bool get_repeat() const { return repeat_; }
 
     // Volume (0–100), safe from any thread (volatile write)
     void set_volume(int vol);
@@ -114,6 +120,7 @@ private:
     std::string playing_file_;
     int current_index_ = -1;
     bool audio_priority_ = true;
+    bool repeat_ = false;
     volatile bool playing_ = false;
     bool user_stopped_ = false;
     int volume_ = 100;

@@ -492,6 +492,14 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         <span class="settings-value" id="syncModeLabel" style="margin-left:8px;font-size:12px;">Audio Priority</span>
       </div>
       <div class="settings-row">
+        <span class="settings-label">Repeat</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="repeatToggle">
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="settings-value" id="repeatLabel" style="margin-left:8px;font-size:12px;">Off</span>
+      </div>
+      <div class="settings-row">
         <span class="settings-label">Start Page</span>
         <select class="start-page-select" id="startPageSelect">
           <option value="player">Movie Player</option>
@@ -616,6 +624,22 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
       syncModeLabel.textContent = isAudio ? 'Audio Priority' : 'Full Video';
     }
 
+    var repeatToggle = document.getElementById('repeatToggle');
+    var repeatLabel = document.getElementById('repeatLabel');
+
+    repeatToggle.addEventListener('change', function() {
+      var mode = repeatToggle.checked ? 'on' : 'off';
+      repeatLabel.textContent = repeatToggle.checked ? 'On' : 'Off';
+      fetch('/api/repeat?mode=' + mode, {method:'POST'}).then(function() {
+        return fetch('/api/save-player-config', {method:'POST'});
+      }).catch(function(){});
+    });
+
+    function updateRepeatUI(on) {
+      repeatToggle.checked = on;
+      repeatLabel.textContent = on ? 'On' : 'Off';
+    }
+
     // Player
     var currentFolder = '';
     var defaultFolder = '';
@@ -628,6 +652,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         document.getElementById('playerStatusText').style.color = d.playing ? '#51cf66' : '#868e96';
         document.getElementById('playerFile').textContent = d.file ? (d.playing_folder ? d.playing_folder + '/' + d.file : d.file) : '-';
         if (d.sync_mode) updateSyncModeUI(d.sync_mode);
+        if (d.repeat !== undefined) updateRepeatUI(d.repeat);
         if (d.volume !== undefined && volumeFromServer) {
           volumeSlider.value = d.volume;
           volumeValue.textContent = d.volume;

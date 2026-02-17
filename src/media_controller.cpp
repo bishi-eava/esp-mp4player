@@ -56,12 +56,15 @@ PlayerConfig load_player_config(const char *path)
             }
         } else if (strcmp(key, "folder") == 0) {
             strlcpy(cfg.folder, val, sizeof(cfg.folder));
+        } else if (strcmp(key, "repeat") == 0) {
+            cfg.repeat = (strcmp(val, "on") == 0);
         }
     }
 
     fclose(f);
-    ESP_LOGI(TAG, "Loaded player config: volume=%d, sync_mode=%s, folder=%s",
-             cfg.volume, cfg.sync_mode, cfg.folder[0] ? cfg.folder : "(root)");
+    ESP_LOGI(TAG, "Loaded player config: volume=%d, sync_mode=%s, folder=%s, repeat=%s",
+             cfg.volume, cfg.sync_mode, cfg.folder[0] ? cfg.folder : "(root)",
+             cfg.repeat ? "on" : "off");
     return cfg;
 }
 
@@ -72,8 +75,9 @@ void save_player_config(const char *path, const PlayerConfig &cfg)
         ESP_LOGE(TAG, "Failed to write player config to %s", path);
         return;
     }
-    fprintf(f, "volume=%d\nsync_mode=%s\nfolder=%s\n",
-            cfg.volume, cfg.sync_mode, cfg.folder);
+    fprintf(f, "volume=%d\nsync_mode=%s\nfolder=%s\nrepeat=%s\n",
+            cfg.volume, cfg.sync_mode, cfg.folder,
+            cfg.repeat ? "on" : "off");
     fclose(f);
     ESP_LOGI(TAG, "Saved player config to %s", path);
 }
@@ -87,6 +91,7 @@ void MediaController::save_config()
     strlcpy(player_config_.folder,
             current_folder_.c_str(),
             sizeof(player_config_.folder));
+    player_config_.repeat = repeat_;
     save_player_config("/sdcard/playlist/player.config", player_config_);
 }
 
@@ -455,6 +460,9 @@ void MediaController::tick()
             if (next_idx < (int)playlist_.size()) {
                 ESP_LOGI(TAG, "Auto-advancing to next: [%d]", next_idx);
                 play_internal(next_idx);
+            } else if (repeat_) {
+                ESP_LOGI(TAG, "Repeating playlist from beginning");
+                play_internal(0);
             } else {
                 ESP_LOGI(TAG, "Playlist finished (reached end)");
             }
