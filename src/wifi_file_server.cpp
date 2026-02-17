@@ -220,6 +220,7 @@ void FileServer::start_http_server()
     config.stack_size = kHttpServerStack;
     config.max_uri_handlers = kHttpMaxUriHandlers;
     config.max_open_sockets = 3;
+    config.lru_purge_enable = true;
 
     ESP_ERROR_CHECK(httpd_start(&server_, &config));
 
@@ -296,13 +297,12 @@ void FileServer::start()
 esp_err_t FileServer::index_redirect_handler(httpd_req_t *req)
 {
     auto *self = static_cast<FileServer *>(req->user_ctx);
-
-    // Redirect to configured start page (server.config is the single source of truth)
-    char location[32];
-    snprintf(location, sizeof(location), "/%s", self->config_.start_page);
+    const char *page = (strcmp(self->config_.start_page, "browse") == 0)
+                       ? "/browse" : "/player";
 
     httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", location);
+    httpd_resp_set_hdr(req, "Location", page);
+    httpd_resp_set_hdr(req, "Connection", "close");
     httpd_resp_send(req, nullptr, 0);
     return ESP_OK;
 }
