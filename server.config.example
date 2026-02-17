@@ -12,5 +12,6 @@ password=12345678
 # URL displayed on QR code / LCD (default: 192.168.4.1)
 url=192.168.4.1
 
-# Initial page: player or browse (default: player)
+# Initial page when accessing http://192.168.4.1/ (default: player)
+# Valid values: player, browse
 start_page=player

@@ -296,19 +296,14 @@ void FileServer::start()
 esp_err_t FileServer::index_redirect_handler(httpd_req_t *req)
 {
     auto *self = static_cast<FileServer *>(req->user_ctx);
-    const char *default_page = self->config_.start_page;
 
-    // Build redirect page with configurable default (localStorage overrides if set)
-    char html[256];
-    snprintf(html, sizeof(html),
-        "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><script>"
-        "var p=localStorage.getItem('startPage');"
-        "location.replace(p==='browse'?'/browse':p==='player'?'/player':'/%s');"
-        "</script></head><body></body></html>",
-        default_page);
+    // Redirect to configured start page (server.config is the single source of truth)
+    char location[32];
+    snprintf(location, sizeof(location), "/%s", self->config_.start_page);
 
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_sendstr(req, html);
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", location);
+    httpd_resp_send(req, nullptr, 0);
     return ESP_OK;
 }
 
@@ -492,14 +487,15 @@ esp_err_t FileServer::status_handler(httpd_req_t *req)
 
     char buf[512];
     snprintf(buf, sizeof(buf),
-             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\",\"sync_mode\":\"%s\",\"volume\":%d}",
+             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\",\"sync_mode\":\"%s\",\"volume\":%d,\"start_page\":\"%s\"}",
              ctrl.is_playing() ? "true" : "false",
              ctrl.current_file(),
              ctrl.current_index(),
              (int)ctrl.playlist().size(),
              ctrl.current_folder().c_str(),
              ctrl.get_audio_priority() ? "audio" : "video",
-             ctrl.get_volume());
+             ctrl.get_volume(),
+             self->config_.start_page);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
