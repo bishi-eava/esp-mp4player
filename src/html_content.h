@@ -365,6 +365,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     .settings-label {
       font-size: 14px;
       color: #495057;
+      min-width: 90px;
     }
     .settings-value {
       font-size: 14px;
@@ -485,19 +486,23 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
       </div>
       <div class="settings-row">
         <span class="settings-label">Sync Mode</span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="syncModeToggle" checked>
-          <span class="toggle-slider"></span>
-        </label>
-        <span class="settings-value" id="syncModeLabel" style="margin-left:8px;font-size:12px;">Audio Priority</span>
+        <span style="display:flex;align-items:center;margin-left:auto">
+          <label class="toggle-switch">
+            <input type="checkbox" id="syncModeToggle" checked>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="settings-value" id="syncModeLabel" style="margin-left:8px;font-size:12px;min-width:90px">Audio Priority</span>
+        </span>
       </div>
       <div class="settings-row">
         <span class="settings-label">Repeat</span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="repeatToggle">
-          <span class="toggle-slider"></span>
-        </label>
-        <span class="settings-value" id="repeatLabel" style="margin-left:8px;font-size:12px;">Off</span>
+        <span style="display:flex;align-items:center;margin-left:auto">
+          <label class="toggle-switch">
+            <input type="checkbox" id="repeatToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="settings-value" id="repeatLabel" style="margin-left:8px;font-size:12px;min-width:90px">Off</span>
+        </span>
       </div>
       <div class="settings-row">
         <span class="settings-label">Start Page</span>
@@ -1217,6 +1222,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
     .settings-label {
       font-size: 14px;
       color: #495057;
+      min-width: 90px;
     }
     .settings-value {
       font-size: 14px;
