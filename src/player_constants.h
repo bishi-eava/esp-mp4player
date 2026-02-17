@@ -65,6 +65,6 @@ constexpr int kApMaxConnections     = 2;
 // --- HTTP server config ---
 constexpr size_t kHttpServerStack   = 8 * 1024;
 constexpr size_t kHttpScratchSize   = 8 * 1024;
-constexpr int kHttpMaxUriHandlers   = 20;
+constexpr int kHttpMaxUriHandlers   = 22;
 
 }  // namespace mp4

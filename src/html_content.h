@@ -2,21 +2,6 @@
 
 namespace mp4 {
 
-// Redirect page: checks localStorage for start page preference
-const char HTML_REDIRECT[] = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <script>
-    var p = localStorage.getItem('startPage');
-    location.replace(p === 'browse' ? '/browse' : '/player');
-  </script>
-</head>
-<body></body>
-</html>
-)rawliteral";
-
 // Player page: standalone player with status, controls, and playlist
 const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 <!DOCTYPE html>
@@ -286,6 +271,25 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     .folder-back:active {
       background: #dee2e6;
     }
+    .folder-default-btn {
+      position: absolute;
+      right: 0;
+      top: 0;
+      padding: 6px 10px;
+      background: #e9ecef;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 20px;
+      color: #868e96;
+      border: none;
+      line-height: 1;
+    }
+    .folder-default-btn:active {
+      background: #dee2e6;
+    }
+    .folder-default-btn.saved {
+      color: #e8590c;
+    }
     .folder-current-info {
       display: inline-block;
     }
@@ -520,8 +524,6 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     var stopConfirmDialog = document.getElementById('stopConfirmDialog');
     var browseBtn = document.getElementById('browseBtn');
 
-    startPageSelect.value = localStorage.getItem('startPage') || 'player';
-
     function formatBytes(bytes) {
       if (bytes < 1024) return bytes + ' B';
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -537,8 +539,10 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 
     // Settings dialog
     settingsBtn.addEventListener('click', function() {
-      startPageSelect.value = localStorage.getItem('startPage') || 'player';
       settingsDialog.classList.add('show');
+      fetch('/api/status').then(function(r) { return r.json(); }).then(function(data) {
+        startPageSelect.value = data.start_page || 'player';
+      }).catch(function() {});
       fetch('/storage-info').then(function(r) { return r.json(); }).then(function(data) {
         document.getElementById('sdTotal').textContent = formatBytes(data.total);
         document.getElementById('sdUsed').textContent = formatBytes(data.used);
@@ -547,7 +551,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     });
 
     document.getElementById('btnSaveSettings').addEventListener('click', function() {
-      localStorage.setItem('startPage', startPageSelect.value);
+      fetch('/api/start-page?page=' + startPageSelect.value, {method:'POST'});
       settingsDialog.classList.remove('show');
     });
 
@@ -595,12 +599,15 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 
     volumeSlider.addEventListener('change', function() {
       volumeFromServer = true;
+      fetch('/api/save-player-config', {method:'POST'}).catch(function(){});
     });
 
     syncModeToggle.addEventListener('change', function() {
       var mode = syncModeToggle.checked ? 'audio' : 'video';
       syncModeLabel.textContent = syncModeToggle.checked ? 'Audio Priority' : 'Full Video';
-      fetch('/api/sync-mode?mode=' + mode, {method:'POST'}).catch(function(){});
+      fetch('/api/sync-mode?mode=' + mode, {method:'POST'}).then(function() {
+        return fetch('/api/save-player-config', {method:'POST'});
+      }).catch(function(){});
     });
 
     function updateSyncModeUI(mode) {
@@ -611,6 +618,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
 
     // Player
     var currentFolder = '';
+    var defaultFolder = '';
     var hasFolders = false;
 
     function loadPlayerStatus() {
@@ -650,8 +658,10 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
         for (var j = 0; j < folders.length; j++) {
           if ((folders[j].name || folders[j]) === currentFolder) { curThumb = folders[j].thumb || ''; break; }
         }
+        var isDefault = (currentFolder === defaultFolder);
         h += '<div class="folder-current-row">';
         h += '<span class="folder-back" onclick="selectFolder(\'\')">&#x2190;</span>';
+        h += '<button class="folder-default-btn' + (isDefault ? ' saved' : '') + '" onclick="saveDefaultFolder(this)">' + (isDefault ? '&#x2605;' : '&#x2606;') + '</button>';
         h += '<div class="folder-current-info">';
         h += '<div class="folder-thumb">';
         if (curThumb) {
@@ -687,6 +697,7 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
     function loadPlayerPlaylist() {
       fetch('/api/playlist').then(function(r) { return r.json(); }).then(function(data) {
         currentFolder = data.folder || '';
+        defaultFolder = data.default_folder || '';
         var list = data.files || [];
         var folders = data.folders || [];
         renderFolders(folders);
@@ -714,6 +725,17 @@ const char HTML_PLAYER_TEMPLATE[] = R"rawliteral(
       fetch('/api/folder?name=' + encodeURIComponent(name), { method: 'POST' })
         .then(function(r) { return r.json(); })
         .then(function() { loadPlayerPlaylist(); })
+        .catch(function() {});
+    }
+
+    function saveDefaultFolder(btn) {
+      fetch('/api/save-player-config', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function() {
+          defaultFolder = currentFolder;
+          btn.innerHTML = '&#x2605;';
+          btn.classList.add('saved');
+        })
         .catch(function() {});
     }
 
@@ -1452,7 +1474,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
     updateManageUI();
 
     var imageExts = ['jpg','jpeg','png','gif','bmp','webp','svg'];
-    var textExts = ['txt','csv','json','xml','html','htm','css','js','py','c','cpp','h','hpp','md','log','ini','cfg','yaml','yml'];
+    var textExts = ['txt','csv','json','xml','html','htm','css','js','py','c','cpp','h','hpp','md','log','ini','cfg','config','yaml','yml'];
 
     function getFileExt(name) {
       var i = name.lastIndexOf('.');
@@ -1467,7 +1489,6 @@ const char HTML_TEMPLATE[] = R"rawliteral(
     }
 
     maxSizeInput.value = maxUploadSize;
-    startPageSelect.value = localStorage.getItem('startPage') || 'player';
 
     function formatBytes(bytes) {
       if (bytes < 1024) return bytes + ' B';
@@ -1479,8 +1500,10 @@ const char HTML_TEMPLATE[] = R"rawliteral(
     // Settings dialog
     settingsBtn.addEventListener('click', function() {
       deleteAllowedToggle.checked = deleteAllowed;
-      startPageSelect.value = localStorage.getItem('startPage') || 'player';
       settingsDialog.classList.add('show');
+      fetch('/api/status').then(function(r) { return r.json(); }).then(function(data) {
+        startPageSelect.value = data.start_page || 'player';
+      }).catch(function() {});
       fetch('/storage-info').then(function(r) { return r.json(); }).then(function(data) {
         document.getElementById('sdTotal').textContent = formatBytes(data.total);
         document.getElementById('sdUsed').textContent = formatBytes(data.used);
@@ -1496,7 +1519,7 @@ const char HTML_TEMPLATE[] = R"rawliteral(
         sessionStorage.setItem('maxUploadSize', val.toString());
         deleteAllowed = deleteAllowedToggle.checked;
         sessionStorage.setItem('deleteAllowed', deleteAllowed.toString());
-        localStorage.setItem('startPage', startPageSelect.value);
+        fetch('/api/start-page?page=' + startPageSelect.value, {method:'POST'});
         updateManageUI();
         settingsDialog.classList.remove('show');
       } else {

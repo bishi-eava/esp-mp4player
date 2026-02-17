@@ -112,6 +112,67 @@ static void sync_time_from_query(httpd_req_t *req, const char *query)
     }
 }
 
+// ---- Server config loader ----
+
+static char *trim(char *s)
+{
+    while (*s == ' ' || *s == '\t') s++;
+    char *end = s + strlen(s) - 1;
+    while (end > s && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) *end-- = '\0';
+    return s;
+}
+
+ServerConfig load_server_config(const char *path)
+{
+    ServerConfig cfg;
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        ESP_LOGI(TAG, "No config file at %s, using defaults (SSID=%s)", path, cfg.ssid);
+        return cfg;
+    }
+
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        char *p = trim(line);
+        if (*p == '\0' || *p == '#') continue;
+
+        char *eq = strchr(p, '=');
+        if (!eq) continue;
+
+        *eq = '\0';
+        char *key = trim(p);
+        char *val = trim(eq + 1);
+
+        if (strcmp(key, "ssid") == 0) {
+            strlcpy(cfg.ssid, val, sizeof(cfg.ssid));
+        } else if (strcmp(key, "password") == 0) {
+            strlcpy(cfg.password, val, sizeof(cfg.password));
+        } else if (strcmp(key, "url") == 0) {
+            strlcpy(cfg.url, val, sizeof(cfg.url));
+        } else if (strcmp(key, "start_page") == 0) {
+            strlcpy(cfg.start_page, val, sizeof(cfg.start_page));
+        }
+    }
+
+    fclose(f);
+    ESP_LOGI(TAG, "Loaded config: SSID=%s, URL=%s, start_page=%s", cfg.ssid, cfg.url, cfg.start_page);
+    return cfg;
+}
+
+void save_server_config(const char *path, const ServerConfig &cfg)
+{
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to write config to %s", path);
+        return;
+    }
+    fprintf(f, "ssid=%s\npassword=%s\nurl=%s\nstart_page=%s\n",
+            cfg.ssid, cfg.password, cfg.url, cfg.start_page);
+    fclose(f);
+    ESP_LOGI(TAG, "Saved config to %s", path);
+}
+
 // ---- WiFi AP initialization ----
 
 void FileServer::init_wifi_ap()
@@ -132,15 +193,15 @@ void FileServer::init_wifi_ap()
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     wifi_config_t wifi_config = {};
-    strlcpy((char *)wifi_config.ap.ssid, kApSsid, sizeof(wifi_config.ap.ssid));
-    wifi_config.ap.ssid_len = strlen(kApSsid);
+    strlcpy((char *)wifi_config.ap.ssid, config_.ssid, sizeof(wifi_config.ap.ssid));
+    wifi_config.ap.ssid_len = strlen(config_.ssid);
     wifi_config.ap.channel = kApChannel;
     wifi_config.ap.max_connection = kApMaxConnections;
 
-    if (strlen(kApPassword) == 0) {
+    if (strlen(config_.password) == 0) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     } else {
-        strlcpy((char *)wifi_config.ap.password, kApPassword, sizeof(wifi_config.ap.password));
+        strlcpy((char *)wifi_config.ap.password, config_.password, sizeof(wifi_config.ap.password));
         wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
     }
 
@@ -148,7 +209,7 @@ void FileServer::init_wifi_ap()
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "WiFi AP started: SSID=%s, Channel=%d", kApSsid, kApChannel);
+    ESP_LOGI(TAG, "WiFi AP started: SSID=%s, Channel=%d", config_.ssid, kApChannel);
 }
 
 // ---- HTTP server setup ----
@@ -159,6 +220,7 @@ void FileServer::start_http_server()
     config.stack_size = kHttpServerStack;
     config.max_uri_handlers = kHttpMaxUriHandlers;
     config.max_open_sockets = 3;
+    config.lru_purge_enable = true;
 
     ESP_ERROR_CHECK(httpd_start(&server_, &config));
 
@@ -191,6 +253,12 @@ void FileServer::start_http_server()
     httpd_register_uri_handler(server_, &syncmode_uri);
     httpd_register_uri_handler(server_, &volume_uri);
 
+    // Settings API
+    httpd_uri_t startpage_uri = { .uri = "/api/start-page", .method = HTTP_POST, .handler = start_page_handler, .user_ctx = this };
+    httpd_uri_t save_pcfg_uri = { .uri = "/api/save-player-config", .method = HTTP_POST, .handler = save_player_config_handler, .user_ctx = this };
+    httpd_register_uri_handler(server_, &startpage_uri);
+    httpd_register_uri_handler(server_, &save_pcfg_uri);
+
     // File management endpoints (matching reference repo paths)
     httpd_uri_t download_uri = { .uri = "/download",     .method = HTTP_GET,  .handler = download_handler, .user_ctx = this };
     httpd_uri_t preview_uri  = { .uri = "/preview",      .method = HTTP_GET,  .handler = preview_handler,  .user_ctx = this };
@@ -213,10 +281,10 @@ void FileServer::start_http_server()
 
 void FileServer::show_connection_info()
 {
-    show_wifi_qr(display_, kApSsid, kApPassword, "192.168.4.1");
+    show_wifi_qr(display_, config_.ssid, config_.password, config_.url);
 
-    ESP_LOGI(TAG, "Connect to WiFi '%s' (pass: %s), then open http://192.168.4.1/",
-             kApSsid, kApPassword);
+    ESP_LOGI(TAG, "Connect to WiFi '%s' (pass: %s), then open http://%s/",
+             config_.ssid, config_.password, config_.url);
 }
 
 void FileServer::start()
@@ -230,8 +298,14 @@ void FileServer::start()
 
 esp_err_t FileServer::index_redirect_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_sendstr(req, HTML_REDIRECT);
+    auto *self = static_cast<FileServer *>(req->user_ctx);
+    const char *page = (strcmp(self->config_.start_page, "browse") == 0)
+                       ? "/browse" : "/player";
+
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", page);
+    httpd_resp_set_hdr(req, "Connection", "close");
+    httpd_resp_send(req, nullptr, 0);
     return ESP_OK;
 }
 
@@ -415,14 +489,15 @@ esp_err_t FileServer::status_handler(httpd_req_t *req)
 
     char buf[512];
     snprintf(buf, sizeof(buf),
-             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\",\"sync_mode\":\"%s\",\"volume\":%d}",
+             "{\"playing\":%s,\"file\":\"%s\",\"index\":%d,\"total\":%d,\"folder\":\"%s\",\"sync_mode\":\"%s\",\"volume\":%d,\"start_page\":\"%s\"}",
              ctrl.is_playing() ? "true" : "false",
              ctrl.current_file(),
              ctrl.current_index(),
              (int)ctrl.playlist().size(),
              ctrl.current_folder().c_str(),
              ctrl.get_audio_priority() ? "audio" : "video",
-             ctrl.get_volume());
+             ctrl.get_volume(),
+             self->config_.start_page);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
@@ -438,9 +513,10 @@ esp_err_t FileServer::playlist_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "application/json");
 
-    // Send: {"folder":"...","files":[...],"folders":[...]}
+    // Send: {"folder":"...","default_folder":"...","files":[...],"folders":[...]}
     char header[300];
-    snprintf(header, sizeof(header), "{\"folder\":\"%s\",\"files\":[", ctrl.current_folder().c_str());
+    snprintf(header, sizeof(header), "{\"folder\":\"%s\",\"default_folder\":\"%s\",\"files\":[",
+             ctrl.current_folder().c_str(), ctrl.saved_folder());
     httpd_resp_sendstr_chunk(req, header);
 
     for (size_t i = 0; i < playlist.size(); i++) {
@@ -581,6 +657,37 @@ esp_err_t FileServer::volume_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+esp_err_t FileServer::start_page_handler(httpd_req_t *req)
+{
+    auto *self = static_cast<FileServer *>(req->user_ctx);
+    char query[64] = "";
+    httpd_req_get_url_query_str(req, query, sizeof(query));
+
+    char page[16] = "";
+    get_decoded_query_param(query, "page", page, sizeof(page));
+
+    if (strcmp(page, "player") == 0 || strcmp(page, "browse") == 0) {
+        strlcpy(self->config_.start_page, page, sizeof(self->config_.start_page));
+        save_server_config("/sdcard/server.config", self->config_);
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"start_page\":\"%s\"}", self->config_.start_page);
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+esp_err_t FileServer::save_player_config_handler(httpd_req_t *req)
+{
+    auto *self = static_cast<FileServer *>(req->user_ctx);
+    self->controller_.save_config();
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
 // ---- File management handlers ----
 
 const char *FileServer::get_content_type(const char *filepath)
@@ -596,7 +703,7 @@ const char *FileServer::get_content_type(const char *filepath)
     if (strcasecmp(ext, "xml") == 0)  return "text/xml";
     if (strcasecmp(ext, "txt") == 0 || strcasecmp(ext, "csv") == 0 ||
         strcasecmp(ext, "log") == 0 || strcasecmp(ext, "md") == 0 ||
-        strcasecmp(ext, "ini") == 0 || strcasecmp(ext, "cfg") == 0 ||
+        strcasecmp(ext, "ini") == 0 || strcasecmp(ext, "cfg") == 0 || strcasecmp(ext, "config") == 0 ||
         strcasecmp(ext, "yaml") == 0 || strcasecmp(ext, "yml") == 0 ||
         strcasecmp(ext, "py") == 0 || strcasecmp(ext, "c") == 0 ||
         strcasecmp(ext, "cpp") == 0 || strcasecmp(ext, "h") == 0 ||

@@ -1,6 +1,7 @@
 #include "media_controller.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <algorithm>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -11,6 +12,83 @@
 static const char *TAG = "media_ctrl";
 
 namespace mp4 {
+
+// ---- Player config loader/saver ----
+
+static char *trim_line(char *s)
+{
+    while (*s == ' ' || *s == '\t') s++;
+    char *end = s + strlen(s) - 1;
+    while (end > s && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) *end-- = '\0';
+    return s;
+}
+
+PlayerConfig load_player_config(const char *path)
+{
+    PlayerConfig cfg;
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        ESP_LOGI(TAG, "No player config at %s, using defaults", path);
+        return cfg;
+    }
+
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        char *p = trim_line(line);
+        if (*p == '\0' || *p == '#') continue;
+
+        char *eq = strchr(p, '=');
+        if (!eq) continue;
+
+        *eq = '\0';
+        char *key = trim_line(p);
+        char *val = trim_line(eq + 1);
+
+        if (strcmp(key, "volume") == 0) {
+            int v = atoi(val);
+            if (v < 0) v = 0;
+            if (v > 100) v = 100;
+            cfg.volume = v;
+        } else if (strcmp(key, "sync_mode") == 0) {
+            if (strcmp(val, "audio") == 0 || strcmp(val, "video") == 0) {
+                strlcpy(cfg.sync_mode, val, sizeof(cfg.sync_mode));
+            }
+        } else if (strcmp(key, "folder") == 0) {
+            strlcpy(cfg.folder, val, sizeof(cfg.folder));
+        }
+    }
+
+    fclose(f);
+    ESP_LOGI(TAG, "Loaded player config: volume=%d, sync_mode=%s, folder=%s",
+             cfg.volume, cfg.sync_mode, cfg.folder[0] ? cfg.folder : "(root)");
+    return cfg;
+}
+
+void save_player_config(const char *path, const PlayerConfig &cfg)
+{
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to write player config to %s", path);
+        return;
+    }
+    fprintf(f, "volume=%d\nsync_mode=%s\nfolder=%s\n",
+            cfg.volume, cfg.sync_mode, cfg.folder);
+    fclose(f);
+    ESP_LOGI(TAG, "Saved player config to %s", path);
+}
+
+void MediaController::save_config()
+{
+    player_config_.volume = volume_;
+    strlcpy(player_config_.sync_mode,
+            audio_priority_ ? "audio" : "video",
+            sizeof(player_config_.sync_mode));
+    strlcpy(player_config_.folder,
+            current_folder_.c_str(),
+            sizeof(player_config_.folder));
+    save_player_config("/sdcard/playlist/player.config", player_config_);
+}
 
 void MediaController::scan_mp4_files(const char *dirpath)
 {

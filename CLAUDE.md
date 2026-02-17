@@ -178,7 +178,8 @@ ffmpeg -i input.mp4 -vf "scale=128:128,fps=15" -c:v libx264 -profile:v baseline 
 WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再生操作とファイル管理を行える。
 
 ### アーキテクチャ
-- **WiFi AP**: WPA2, SSID="esp-mp4player", Password="12345678" (常時ON)
+- **WiFi AP**: WPA2, デフォルト SSID="esp-mp4player", Password="12345678" (常時ON)
+- **設定ファイル**: `/sdcard/server.config` で SSID/パスワード/URL/初期ページをカスタマイズ可能
 - **HTTP server**: `esp_http_server`、起動時に20個のURIハンドラ登録
 - **プレイリスト**: `/sdcard/playlist/` フォルダ内の .mp4 ファイルを順次再生。直下にmp4がない場合はサブフォルダを選択
 - **ハイブリッド起動**: WiFi起動 → playlistフォルダにmp4があれば自動再生 → ブラウザから操作可能
@@ -188,7 +189,7 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 ### REST API
 | Method | Path | 説明 |
 |---|---|---|
-| GET | `/` | リダイレクト（localStorage設定でplayer or browseへ） |
+| GET | `/` | リダイレクト（server.configのstart_pageへ302） |
 | GET | `/player` | プレイヤーページ |
 | GET | `/browse` | ファイルブラウザページ |
 | GET | `/api/status` | `{playing, file, index, total, folder, sync_mode, volume}` |
@@ -198,6 +199,9 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | POST | `/api/stop` | 再生停止 |
 | POST | `/api/next` / `/api/prev` | 次/前の動画 |
 | POST | `/api/volume?vol=N` | 音量設定 (0–100) |
+| POST | `/api/sync-mode?mode=audio\|video` | A/V同期モード切替 |
+| POST | `/api/start-page?page=player\|browse` | 初期ページ設定（server.configに保存） |
+| POST | `/api/save-player-config` | プレイヤー設定保存（volume, sync_mode, folderをplayer.configに） |
 | GET | `/download?file=/path` | ファイルダウンロード |
 | GET | `/preview?file=/path` | ファイルプレビュー |
 | POST | `/upload?path=/&filename=xxx` | アップロード（Raw POST body） |
@@ -205,6 +209,44 @@ WiFi AP + HTTP server が常時動作。スマホのブラウザから動画再�
 | POST | `/rename?file=/path&name=new` | リネーム |
 | POST | `/mkdir?path=/&name=dir` | フォルダ作成 |
 | GET | `/storage-info` | `{total, used, free}` |
+
+### server.config（SDカード設定ファイル）
+`/sdcard/server.config` にテキストファイルを置くと WiFi AP/サーバー設定をカスタマイズできる。ファイルがなければデフォルト値を使用。
+```
+ssid=MyPlayer
+password=secret123
+url=192.168.4.1
+start_page=player
+```
+| キー | デフォルト値 | 説明 |
+|---|---|---|
+| ssid | esp-mp4player | WiFi AP の SSID |
+| password | 12345678 | WiFi AP のパスワード（空=オープン） |
+| url | 192.168.4.1 | QR/LCD に表示する接続先URL |
+| start_page | player | 初期ページ (`player` or `browse`) |
+
+- `key=value` 形式。空行・`#` 始まりの行はスキップ
+- 未指定のキーはデフォルト値を使用
+- SD初期化後・WiFi起動前に読み込み（`load_server_config()`）
+
+### player.config（プレイヤー設定ファイル）
+`/sdcard/playlist/player.config` にテキストファイルを置くとプレイヤー設定を永続化できる。ファイルがなければデフォルト値を使用。
+Web UIから設定を変更すると自動的にファイルに保存される。
+```
+volume=80
+sync_mode=audio
+folder=anime
+```
+| キー | デフォルト値 | 説明 |
+|---|---|---|
+| volume | 100 | 音量 (0–100) |
+| sync_mode | audio | A/V同期モード (`audio` or `video`) |
+| folder | (空) | プレイリストサブフォルダ名（空=ルート） |
+
+- 音量: スライダーリリース時に自動保存
+- Sync mode: トグル変更時に自動保存
+- フォルダ: Web UI の「Set Default」ボタンで明示的に保存
+- 起動時に `folder` が設定されていれば自動的にそのフォルダを選択して再生開始
 
 ### PSRAM 割り当てモード (重要)
 全ボードで `CONFIG_SPIRAM_USE_MALLOC=y` を使用（`CAPS_ALLOC` ではない）。

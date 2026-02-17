@@ -124,22 +124,29 @@ extern "C" void app_main(void)
         return;
     }
 
+    // Load configs from SD card (defaults if files missing)
+    auto server_config = mp4::load_server_config("/sdcard/server.config");
+    auto player_config = mp4::load_player_config("/sdcard/playlist/player.config");
+
     // MediaController manages playlist and playback lifecycle
-    static mp4::MediaController controller(display);
+    static mp4::MediaController controller(display, player_config);
 
     // WiFi AP + HTTP server (always on)
-    static mp4::FileServer server(display, controller);
+    static mp4::FileServer server(display, controller, server_config);
     server.start();
 
-    // Scan and auto-play
+    // Scan playlist and select saved folder if configured
     controller.scan_playlist();
+    if (player_config.folder[0] != '\0') {
+        controller.select_folder(player_config.folder);
+    }
 
-    if (!controller.playlist().empty()) {
+    if (strcmp(server_config.start_page, "player") == 0 && !controller.playlist().empty()) {
         vTaskDelay(pdMS_TO_TICKS(mp4::kSplashDelayMs));
         controller.play(0);
     }
 
-    // Main loop: detect playback completion
+    // Main loop
     while (true) {
         controller.tick();
         vTaskDelay(pdMS_TO_TICKS(500));
