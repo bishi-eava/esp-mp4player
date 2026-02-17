@@ -20,6 +20,8 @@ https://youtube.com/shorts/kdLJf5c8VBU
 - 自動スケーリング — LCD以上のサイズの動画はアスペクト比維持で縮小表示
 - ファイルブラウザ — アップロード・ダウンロード・削除・リネーム・フォルダ作成
 - QRコード表示 — アイドル時にWiFi接続QRをLCDに表示
+- 設定ファイル — `server.config`（WiFi AP設定）と `player.config`（再生設定）でカスタマイズ可能
+- 設定自動保存 — 音量・同期モード・デフォルトフォルダの変更がSDカードに自動保存
 
 ## 対応ボード
 
@@ -66,7 +68,7 @@ https://youtube.com/shorts/kdLJf5c8VBU
 
 起動と同時にWiFi APが立ち上がり、スマホやPCのブラウザから操作できます。
 
-| 項目 | 値 |
+| 項目 | デフォルト値 |
 |---|---|
 | SSID | `esp-mp4player` |
 | パスワード | `12345678` |
@@ -74,19 +76,77 @@ https://youtube.com/shorts/kdLJf5c8VBU
 
 アイドル時はLCDにWiFi接続用のQRコードが表示されます。スマホのカメラで読み取ると自動接続できます。
 
+> SSID・パスワード・初期ページなどは `server.config` でカスタマイズ可能です（後述）。
+
 ### プレイヤーページ (`/player`)
 
 - 再生 / 停止 / 次 / 前
-- 音量スライダー (0-100%、ドラッグ中もリアルタイム反映)
-- A/V同期モード切替 (Audio Priority / Full Video)
+- 音量スライダー (0-100%、ドラッグ中もリアルタイム反映、変更時に自動保存)
+- A/V同期モード切替 (Audio Priority / Full Video、変更時に自動保存)
 - プレイリスト表示・フォルダ選択
+- ★ ボタンでデフォルト再生フォルダを登録（起動時の自動再生に使用）
 
 ### ファイルブラウザページ (`/browse`)
 
 - ファイル一覧・フォルダナビゲーション
 - アップロード（再生停止中のみ、メモリ制約のため）
 - ダウンロード・削除・リネーム・フォルダ作成
+- テキスト・設定ファイルのプレビュー
 - ストレージ使用量表示
+
+## 設定ファイル
+
+SDカード上のテキストファイルで設定をカスタマイズできます。`key=value` 形式で、`#` 始まりの行はコメント、空行は無視されます。ファイルがない場合はデフォルト値で動作します。
+
+### server.config（WiFi AP設定）
+
+SDカードのルートに `/sdcard/server.config` を配置します。
+
+```ini
+# WiFi AP SSID (default: esp-mp4player)
+ssid=MyPlayer
+
+# WiFi AP password (default: 12345678, empty for open network)
+password=secret123
+
+# URL displayed on QR code / LCD (default: 192.168.4.1)
+url=192.168.4.1
+
+# Initial page: player or browse (default: player)
+start_page=player
+```
+
+| キー | デフォルト | 説明 |
+|---|---|---|
+| `ssid` | `esp-mp4player` | WiFi APのSSID |
+| `password` | `12345678` | WiFi APのパスワード（空欄でオープンネットワーク） |
+| `url` | `192.168.4.1` | QR/LCDに表示する接続先URL |
+| `start_page` | `player` | 初期ページ（`player`: 自動再生、`browse`: ファイルブラウザ） |
+
+### player.config（再生設定）
+
+`/sdcard/playlist/player.config` に配置します。Web UIで変更すると自動保存されます。
+
+```ini
+# Volume (0-100, default: 100)
+volume=100
+
+# A/V sync mode: "audio" or "video" (default: audio)
+sync_mode=audio
+
+# Playlist subfolder (default: empty = root of /sdcard/playlist/)
+folder=
+```
+
+| キー | デフォルト | 説明 |
+|---|---|---|
+| `volume` | `100` | 音量 (0–100) |
+| `sync_mode` | `audio` | A/V同期モード（`audio`: 音声優先、`video`: 全フレーム表示） |
+| `folder` | (空) | デフォルト再生フォルダ名（playlistサブフォルダ） |
+
+- **音量**と**同期モード**はWeb UIで変更すると即座にSDカードへ保存されます
+- **デフォルトフォルダ**はプレイヤーページの ★ ボタンで登録します
+- `start_page=player` の場合、起動時に `folder` で指定されたフォルダから自動再生します
 
 ## アーキテクチャ
 
