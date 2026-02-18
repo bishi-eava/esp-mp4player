@@ -333,6 +333,7 @@ void DemuxStage::run()
 
         unsigned total_frames = tr->sample_count;
         const bool audio_prio = sync_.audio_priority;
+        int64_t demux_wall_start = esp_timer_get_time();
         ESP_LOGI(TAG, "Starting demux: %d video frames, timescale=%u, sync_samples=%u, mode=%s",
                  total_frames, timescale, tr->sync_count,
                  audio_prio ? "audio_priority" : "full_video");
@@ -499,6 +500,9 @@ void DemuxStage::run()
                 }
             }
         }
+
+        int64_t demux_wall_elapsed = esp_timer_get_time() - demux_wall_start;
+        ESP_LOGI(TAG, "Demux finished: %lld ms wall time", demux_wall_elapsed / 1000);
 
         psram_free(read_buf);
         psram_free(nal_buf);
