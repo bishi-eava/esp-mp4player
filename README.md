@@ -16,7 +16,7 @@ https://youtube.com/shorts/kdLJf5c8VBU
 - WiFi AP内蔵 — スマホのブラウザから再生操作・ファイル管理
 - プレイリスト管理 — `/playlist` フォルダ内のMP4を順次再生、サブフォルダ対応
 - 音量調整 — Web UIスライダーでリアルタイム変更（SPK Base構成）
-- A/V同期モード切替 — Audio Priority / Full Video
+- A/V同期モード切替 — Audio Priority（音声の実再生位置に映像を同期） / Full Video（全フレーム表示）
 - 自動スケーリング — LCD以上のサイズの動画はアスペクト比維持で縮小表示
 - ファイルブラウザ — アップロード・ダウンロード・削除・リネーム・フォルダ作成
 - QRコード表示 — アイドル時にWiFi接続QRをLCDに表示
@@ -136,6 +136,9 @@ sync_mode=audio
 
 # Playlist subfolder (default: empty = root of /sdcard/playlist/)
 folder=
+
+# Repeat playback: "on" or "off" (default: off)
+repeat=off
 ```
 
 | キー | デフォルト | 説明 |
@@ -143,8 +146,9 @@ folder=
 | `volume` | `100` | 音量 (0–100) |
 | `sync_mode` | `audio` | A/V同期モード（`audio`: 音声優先、`video`: 全フレーム表示） |
 | `folder` | (空) | デフォルト再生フォルダ名（playlistサブフォルダ） |
+| `repeat` | `off` | リピート再生（`on`: 最後まで再生後に先頭から繰り返し） |
 
-- **音量**と**同期モード**はWeb UIで変更すると即座にSDカードへ保存されます
+- **音量**・**同期モード**・**リピート**はWeb UIで変更すると即座にSDカードへ保存されます
 - **デフォルトフォルダ**はプレイヤーページの ★ ボタンで登録します
 - `start_page=player` の場合、起動時に `folder` で指定されたフォルダから自動再生します
 
@@ -223,6 +227,7 @@ Core 1                                Core 0
 - **音声再生 (BOARD_HAS_AUDIO時のみ):** DemuxStageが映像/音声フレームをPTS順にインターリーブ送信
   - AudioPipeline: AACフレームをesp_audio_codecでPCMデコード → ボリュームスケーリング → I2S DMA出力
   - I2Sクロックが自然にリアルタイム再生速度を制御（バックプレッシャー）
+  - A/V同期: Audio Priorityモードでは音声の実再生位置（`audio_playback_pts_ms`）に映像を同期。音声と映像のズレを ~100ms 以下に抑制
   - ボリューム制御: ソフトウェアPCMスケーリング `(sample * vol) >> 8`（Web UIからリアルタイム変更可能）
 
 ## 使用ライブラリ

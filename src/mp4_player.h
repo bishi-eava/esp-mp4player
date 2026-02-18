@@ -69,6 +69,7 @@ struct PipelineSync {
     QueueHandle_t     audio_queue   = nullptr;
     volatile bool     audio_eos     = false;
     volatile int      audio_volume  = 256;  // 0–256, 256=full volume
+    volatile int32_t  audio_playback_pts_ms = -1;  // A/V sync: audio task reports playback position (ms, -1=not started)
 #endif
 
     bool init() {

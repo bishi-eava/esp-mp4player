@@ -71,7 +71,7 @@ Core 1                                Core 0
 | 構造体/クラス | 内容 |
 |---|---|
 | `VideoInfo` | video_w/h, scaled_w/h, display_x/y |
-| `PipelineSync` | nal_queue, audio_queue, セマフォ, EventGroup(task_done), EOSフラグ, stop_requested, audio_volume |
+| `PipelineSync` | nal_queue, audio_queue, セマフォ, EventGroup(task_done), EOSフラグ, stop_requested, audio_volume, audio_playback_pts_ms |
 | `DoubleBuffer` | RGB565ダブルバッファ（PSRAM, swap/read/write） |
 | `AudioInfo` | sample_rate, channels, DSI |
 
@@ -91,7 +91,14 @@ Core 1                                Core 0
 - demux_taskが time-ordered interleaved demux でビデオ/オーディオフレームをPTS順に送信
 - audio_task: audio_queueからAACフレーム受信 → esp_audio_codec でPCMデコード → ボリュームスケーリング → I2S DMA出力
 - I2Sクロックが自然にリアルタイム再生速度を制御（バックプレッシャー）
-- ビデオはPTSベースのタイミング制御（既存）、両方リアルタイムクロックで近似同期
+- **A/V同期 (Audio PTS Sync)**: audio_priority モードでは映像を音声の実再生位置に同期
+  - audio_task が I2S 書き込み後に `audio_playback_pts_ms` (volatile int32_t) を更新
+  - decode_task が映像フレームの PTS と `audio_playback_pts_ms` を比較してタイミング制御
+  - 映像が先行 → vTaskDelay（ブレーキ）、映像が遅延 → taskYIELD（追加遅延なし）
+  - 500ms 安全キャップ: 音声タスク停止時にビデオが無限ブロックするのを防止
+  - 音声未開始時 (`audio_playback_pts_ms == -1`) はウォールクロックにフォールバック
+  - int32_t (ms) を使用: ESP32-S3 の 32bit アラインド読み書きは原子的（最大596時間）
+- full_video モードではウォールクロック PTS で全フレーム表示
 - **ボリューム制御**: ソフトウェアPCMスケーリング `(sample * vol) >> 8`（固定小数点、vol: 0–256）
   - Web UI slider → POST /api/volume → MediaController → Mp4Player → PipelineSync.audio_volume (volatile)
   - 3パス最適化: vol==0→memset(0), vol<256→スケーリング, vol==256→no-op
@@ -103,8 +110,9 @@ Core 1                                Core 0
   - Audio 370B フレーム: 8KB → 512B (1セクタ) に削減 → audio read 3.4x 高速化 (85s → 25s)
   - Video ~8KB フレーム: stdio オーバーヘッド排除で 1.26x 高速化 (68s → 54s)
 - **FILE\* は MP4D_open 専用**: minimp4 の1バイト読みに `setvbuf` 8KB バッファが必要。ヘッダ解析後に `fclose` し、POSIX fd でフレーム読み取り
-- **Audio 優先モードでは PTS 遅延なし**: `sync_mode=audio` 時、I2S クロックがリアルタイムリファレンス → ビデオ側の PTS sleep は不要
-- **Audio キューチューニング**: 送信タイムアウト 200ms → 25ms、キュー深度 16 → 32
+- **Audio PTS 同期**: `sync_mode=audio` 時、映像を音声の実再生位置に同期（ウォールクロック PTS → Audio PTS Sync に変更）
+  - Audio キュー深度 16 のバッファ遅延（~368ms）を補正し、音声と映像のズレを ~100ms 以下に抑制
+- **Audio キューチューニング**: 送信タイムアウト 200ms → 25ms
 - **実測結果** (320x180 音声付き、128x128 LCD、Atom S3R + SPK Base):
   - 14.9fps / 15fps ターゲット（フレームスキップ 0）
   - 全 3109 ビデオフレーム + 9478 オーディオフレームをデコード・再生

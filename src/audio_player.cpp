@@ -214,6 +214,8 @@ void AudioPipeline::run()
                     remaining -= written;
                 }
                 total_i2s_us += esp_timer_get_time() - t_i2s;
+                // Report playback position for A/V sync
+                sync_.audio_playback_pts_ms = (int32_t)(msg.pts_us / 1000);
                 decoded_frames++;
             }
         }

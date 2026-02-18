@@ -24,7 +24,7 @@ constexpr int kAudioCore   = 0;
 
 // --- Queue depths ---
 constexpr int kNalQueueDepth   = 16;
-constexpr int kAudioQueueDepth = 32;
+constexpr int kAudioQueueDepth = 16;
 
 // --- Buffer sizes ---
 constexpr size_t kReadBufSize  = 64 * 1024;

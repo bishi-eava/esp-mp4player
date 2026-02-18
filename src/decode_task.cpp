@@ -193,16 +193,44 @@ void DecodeStage::run()
             psram_free(msg.data);
 
             // PTS timing (skip if stopping)
-            // audio_priority: no delay — I2S clock is the real-time reference,
-            // decode should run at max speed, paced by queue backpressure.
-            if (!sync_.stop_requested && !sync_.audio_priority &&
-                !msg.is_sps_pps && msg.pts_us > 0) {
-                int64_t elapsed_us = esp_timer_get_time() - start_time;
-                int64_t delay_us = msg.pts_us - elapsed_us;
-                if (delay_us > 1000) {
-                    vTaskDelay(pdMS_TO_TICKS(delay_us / 1000));
-                } else {
-                    vTaskDelay(1);  // full_video: yield CPU when behind
+            if (!sync_.stop_requested && !msg.is_sps_pps && msg.pts_us > 0) {
+#ifdef BOARD_HAS_AUDIO
+                if (sync_.audio_priority) {
+                    // Sync video display to audio playback position.
+                    // Only slows video when ahead of audio; never adds
+                    // delay when video is behind (high-res / high-fps safe).
+                    int32_t audio_ms = sync_.audio_playback_pts_ms;
+                    if (audio_ms >= 0) {
+                        int32_t delay_ms = (int32_t)(msg.pts_us / 1000) - audio_ms;
+                        if (delay_ms > 1 && delay_ms < 500) {
+                            vTaskDelay(pdMS_TO_TICKS(delay_ms));
+                        } else if (delay_ms >= 500) {
+                            // Safety cap: audio may be stalled
+                            vTaskDelay(pdMS_TO_TICKS(500));
+                        } else {
+                            taskYIELD();
+                        }
+                    } else {
+                        // Audio not started yet — use wall clock
+                        int64_t elapsed_us = esp_timer_get_time() - start_time;
+                        int64_t delay_us = msg.pts_us - elapsed_us;
+                        if (delay_us > 1000) {
+                            vTaskDelay(pdMS_TO_TICKS(delay_us / 1000));
+                        } else {
+                            taskYIELD();
+                        }
+                    }
+                } else
+#endif
+                {
+                    // full_video mode: use wall clock
+                    int64_t elapsed_us = esp_timer_get_time() - start_time;
+                    int64_t delay_us = msg.pts_us - elapsed_us;
+                    if (delay_us > 1000) {
+                        vTaskDelay(pdMS_TO_TICKS(delay_us / 1000));
+                    } else {
+                        vTaskDelay(1);
+                    }
                 }
             }
         }
