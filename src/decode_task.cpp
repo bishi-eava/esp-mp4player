@@ -200,6 +200,8 @@ void DecodeStage::run()
                     vTaskDelay(pdMS_TO_TICKS(delay_us / 1000));
                 } else if (!sync_.audio_priority) {
                     vTaskDelay(1);  // full_video: yield CPU when behind
+                } else {
+                    taskYIELD();    // audio_priority: yield without delay
                 }
             }
         }

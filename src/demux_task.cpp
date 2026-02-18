@@ -147,8 +147,8 @@ bool DemuxStage::send_audio(const uint8_t *data, int size, int64_t pts_us)
     msg.pts_us = pts_us;
     msg.eos    = false;
 
-    if (xQueueSend(sync_.audio_queue, &msg, pdMS_TO_TICKS(kQueueSendTimeoutMs)) != pdTRUE) {
-        ESP_LOGE(TAG, "Audio queue send timeout");
+    if (xQueueSend(sync_.audio_queue, &msg, pdMS_TO_TICKS(kAudioSendTimeoutMs)) != pdTRUE) {
+        ESP_LOGW(TAG, "Audio queue send timeout, skipping frame");
         psram_free(buf);
         return false;
     }
@@ -348,6 +348,19 @@ void DemuxStage::run()
 
 #ifdef BOARD_HAS_AUDIO
         if (audio_track >= 0 && sync_.audio_queue) {
+            // Open separate file handle for audio reads to avoid seek thrashing.
+            // With a shared FILE*, alternating video/audio reads invalidate the
+            // stdio buffer on every seek (~58 seeks/sec).  Separate handles let
+            // each track's sequential reads benefit from their own 8KB buffer.
+            FILE *af = fopen(filepath_, "rb");
+            if (!af) {
+                ESP_LOGE(TAG, "Failed to open audio file handle");
+                // Fall through — audio reads will use 'f' as fallback
+                af = f;
+            } else {
+                setvbuf(af, NULL, _IOFBF, kStdioBufSize);
+            }
+
             MP4D_track_t *atr = &mp4.track[audio_track];
             unsigned audio_timescale = atr->timescale;
             unsigned total_audio_frames = atr->sample_count;
@@ -429,13 +442,14 @@ void DemuxStage::run()
                         a_sample++;
                         continue;
                     }
-                    if (fseek(f, (long)a_offset, SEEK_SET) != 0 ||
-                        fread(read_buf, 1, a_bytes, f) != a_bytes) {
+                    if (fseek(af, (long)a_offset, SEEK_SET) != 0 ||
+                        fread(read_buf, 1, a_bytes, af) != a_bytes) {
                         ESP_LOGE(TAG, "Failed to read audio frame %d", a_sample);
                         break;
                     }
                     if (!send_audio(read_buf, a_bytes, a_pts)) {
-                        break;
+                        a_sample++;
+                        continue;
                     }
                     a_sample++;
                 }
@@ -443,6 +457,7 @@ void DemuxStage::run()
             if (v_skipped > 0) {
                 ESP_LOGI(TAG, "Demux video frames skipped: %u / %u", v_skipped, total_frames);
             }
+            if (af != f) fclose(af);
         } else
 #endif
         {
