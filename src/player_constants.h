@@ -24,7 +24,7 @@ constexpr int kAudioCore   = 0;
 
 // --- Queue depths ---
 constexpr int kNalQueueDepth   = 16;
-constexpr int kAudioQueueDepth = 16;
+constexpr int kAudioQueueDepth = 32;
 
 // --- Buffer sizes ---
 constexpr size_t kReadBufSize  = 64 * 1024;
@@ -42,7 +42,7 @@ constexpr int kI2sDmaFrameNum = 512;
 // --- Timeout durations (ms) ---
 constexpr int kQueueSendTimeoutMs  = 5000;
 constexpr int kVideoSendTimeoutMs  = 100;   // demux: wait up to 100ms for queue space before skipping
-constexpr int kAudioSendTimeoutMs  = 200;   // demux: audio queue send timeout (shorter than generic 5s)
+constexpr int kAudioSendTimeoutMs  = 25;    // demux: ~1 audio frame period; drop rather than stall video
 constexpr int kQueueRecvTimeoutMs  = 10000;
 constexpr int kAudioRecvTimeoutMs  = 5000;
 

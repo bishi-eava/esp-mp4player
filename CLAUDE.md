@@ -96,6 +96,19 @@ Core 1                                Core 0
   - Web UI slider → POST /api/volume → MediaController → Mp4Player → PipelineSync.audio_volume (volatile)
   - 3パス最適化: vol==0→memset(0), vol<256→スケーリング, vol==256→no-op
 
+### パフォーマンス最適化 (SD I/O)
+- **POSIX I/O でフレーム読み取り**: `demux_task.cpp` で stdio (`fread`/`fseek`) から POSIX (`read`/`lseek`) に移行
+  - ESP-IDF newlib の `fread()` は VFS ファイルに対して stdio バッファを正しく活用せず、毎回 8KB の物理 SD リードを発生させる
+  - POSIX `read()` は stdio バッファ層をバイパスし、要求サイズのみを VFS → fatfs → SPI SD で読み取る
+  - Audio 370B フレーム: 8KB → 512B (1セクタ) に削減 → audio read 3.4x 高速化 (85s → 25s)
+  - Video ~8KB フレーム: stdio オーバーヘッド排除で 1.26x 高速化 (68s → 54s)
+- **FILE\* は MP4D_open 専用**: minimp4 の1バイト読みに `setvbuf` 8KB バッファが必要。ヘッダ解析後に `fclose` し、POSIX fd でフレーム読み取り
+- **Audio 優先モードでは PTS 遅延なし**: `sync_mode=audio` 時、I2S クロックがリアルタイムリファレンス → ビデオ側の PTS sleep は不要
+- **Audio キューチューニング**: 送信タイムアウト 200ms → 25ms、キュー深度 16 → 32
+- **実測結果** (320x180 音声付き、128x128 LCD、Atom S3R + SPK Base):
+  - 14.9fps / 15fps ターゲット（フレームスキップ 0）
+  - 全 3109 ビデオフレーム + 9478 オーディオフレームをデコード・再生
+
 ### スケーリング (Nearest-Neighbor)
 - LCDより大きい動画はアスペクト比を維持して縮小表示（レターボックス/ピラーボックス）
 - YUV→RGB565変換時にインラインでスケーリング（追加バッファ不要）

@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "driver/i2s_std.h"
 #include "esp_audio_dec_default.h"
 #include "esp_aac_dec.h"
@@ -151,6 +152,7 @@ void AudioPipeline::run()
         }
 
         unsigned decoded_frames = 0;
+        int64_t total_dec_us = 0, total_i2s_us = 0;
 
         AudioMsg msg;
         while (true) {
@@ -176,7 +178,9 @@ void AudioPipeline::run()
             out_frame.buffer = pcm_buf;
             out_frame.len    = kPcmBufSize;
 
+            int64_t t0 = esp_timer_get_time();
             aerr = esp_audio_dec_process(dec_handle, &in_raw, &out_frame);
+            total_dec_us += esp_timer_get_time() - t0;
             psram_free(msg.data);
 
             if (aerr != ESP_AUDIO_ERR_OK) {
@@ -199,7 +203,7 @@ void AudioPipeline::run()
                 // vol==256: full volume, no scaling needed
 
                 // I2S write with stop check (avoid portMAX_DELAY blocking)
-                size_t bytes_written = 0;
+                int64_t t_i2s = esp_timer_get_time();
                 size_t remaining = out_frame.decoded_size;
                 uint8_t *ptr = pcm_buf;
                 while (remaining > 0 && !sync_.stop_requested) {
@@ -209,11 +213,14 @@ void AudioPipeline::run()
                     ptr += written;
                     remaining -= written;
                 }
+                total_i2s_us += esp_timer_get_time() - t_i2s;
                 decoded_frames++;
             }
         }
 
         ESP_LOGI(TAG, "Audio playback complete: %u frames decoded", decoded_frames);
+        ESP_LOGI(TAG, "Audio timing: aac_dec=%lldms i2s_write=%lldms",
+                 total_dec_us / 1000, total_i2s_us / 1000);
 
         safe_free(pcm_buf);
         esp_audio_dec_close(dec_handle);

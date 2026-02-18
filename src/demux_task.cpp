@@ -1,12 +1,15 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 
 #include "mp4_player.h"
 #include "board_config.h"
@@ -192,7 +195,16 @@ void DemuxStage::run()
         return;
     }
 
-    setvbuf(f, NULL, _IOFBF, kStdioBufSize);
+    // Allocate stdio buffer from internal RAM (faster CPU access than PSRAM,
+    // avoids PSRAM bus contention with H.264 decoder on Core 1).
+    // With USE_MALLOC + ALWAYSINTERNAL=4096, setvbuf(NULL) would land in PSRAM.
+    char *f_stdio = static_cast<char*>(
+        heap_caps_malloc(kStdioBufSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (f_stdio) {
+        setvbuf(f, f_stdio, _IOFBF, kStdioBufSize);
+    } else {
+        setvbuf(f, NULL, _IOFBF, kStdioBufSize);
+    }
 
     {
         fseek(f, 0, SEEK_END);
@@ -204,6 +216,7 @@ void DemuxStage::run()
         if (!MP4D_open(&mp4, mp4_read_cb, f, file_size)) {
             ESP_LOGE(TAG, "MP4D_open failed");
             fclose(f);
+            heap_caps_free(f_stdio);
             send_eos();
             return;
         }
@@ -229,6 +242,7 @@ void DemuxStage::run()
             ESP_LOGE(TAG, "No H.264 video track found");
             MP4D_close(&mp4);
             fclose(f);
+            heap_caps_free(f_stdio);
             send_eos();
             return;
         }
@@ -242,6 +256,7 @@ void DemuxStage::run()
             ESP_LOGE(TAG, "Invalid video dimensions: %dx%d", vw, vh);
             MP4D_close(&mp4);
             fclose(f);
+            heap_caps_free(f_stdio);
             send_eos();
             return;
         }
@@ -250,6 +265,7 @@ void DemuxStage::run()
                      vw, vh, BOARD_MAX_DECODE_WIDTH, BOARD_MAX_DECODE_HEIGHT);
             MP4D_close(&mp4);
             fclose(f);
+            heap_caps_free(f_stdio);
             send_eos();
             return;
         }
@@ -298,6 +314,7 @@ void DemuxStage::run()
             safe_free(nal_buf);
             MP4D_close(&mp4);
             fclose(f);
+            heap_caps_free(f_stdio);
             send_eos();
             return;
         }
@@ -331,6 +348,26 @@ void DemuxStage::run()
             ESP_LOGI(TAG, "PPS sent: %d bytes", pps_bytes);
         }
 
+        // Done with FILE* — close it and switch to POSIX fd for frame reads.
+        // MP4D_close only frees memory and doesn't use the read callback.
+        // POSIX read() bypasses newlib's stdio layer which doesn't properly
+        // buffer VFS-backed files (fread triggers a full 8KB physical SD read
+        // on every call regardless of stdio buffer state).
+        fclose(f);
+        f = nullptr;
+        heap_caps_free(f_stdio);
+        f_stdio = nullptr;
+
+        int v_fd = open(filepath_, O_RDONLY);
+        if (v_fd < 0) {
+            ESP_LOGE(TAG, "Failed to open video fd");
+            psram_free(read_buf);
+            psram_free(nal_buf);
+            MP4D_close(&mp4);
+            send_eos();
+            return;
+        }
+
         unsigned total_frames = tr->sample_count;
         const bool audio_prio = sync_.audio_priority;
         int64_t demux_wall_start = esp_timer_get_time();
@@ -349,17 +386,13 @@ void DemuxStage::run()
 
 #ifdef BOARD_HAS_AUDIO
         if (audio_track >= 0 && sync_.audio_queue) {
-            // Open separate file handle for audio reads to avoid seek thrashing.
-            // With a shared FILE*, alternating video/audio reads invalidate the
-            // stdio buffer on every seek (~58 seeks/sec).  Separate handles let
-            // each track's sequential reads benefit from their own 8KB buffer.
-            FILE *af = fopen(filepath_, "rb");
-            if (!af) {
-                ESP_LOGE(TAG, "Failed to open audio file handle");
-                // Fall through — audio reads will use 'f' as fallback
-                af = f;
-            } else {
-                setvbuf(af, NULL, _IOFBF, kStdioBufSize);
+            // Separate POSIX fd for audio reads — each fd maintains its own
+            // file position, so video/audio reads don't interfere.
+            int a_fd = open(filepath_, O_RDONLY);
+            bool separate_a_fd = (a_fd >= 0);
+            if (!separate_a_fd) {
+                ESP_LOGE(TAG, "Failed to open audio fd, sharing video fd");
+                a_fd = v_fd;  // fallback: share video fd (needs lseek every time)
             }
 
             MP4D_track_t *atr = &mp4.track[audio_track];
@@ -372,6 +405,21 @@ void DemuxStage::run()
             unsigned a_sample = 0;
             unsigned v_skipped = 0;
             int64_t demux_start_time = audio_prio ? esp_timer_get_time() : 0;
+
+            // File position tracking — skip fseek when already at the right offset.
+            // newlib fseek invalidates the stdio read buffer even for adjacent positions,
+            // forcing a full physical SD read on the next fread.  By tracking position
+            // and skipping unnecessary fseeks, sequential reads within MP4 chunks
+            // benefit from the 8KB stdio buffer (audio: ~21 frames per buffer fill).
+            int64_t f_pos = -1;   // video FILE position (-1 = unknown)
+            int64_t af_pos = -1;  // audio FILE position (-1 = unknown)
+
+            // Timing instrumentation
+            int64_t total_v_read_us = 0, total_a_read_us = 0;
+            int64_t total_v_send_us = 0, total_a_send_us = 0;
+            uint32_t v_sent = 0, a_sent = 0, a_dropped = 0;
+            uint32_t v_seeks = 0, v_seek_skips = 0;
+            uint32_t a_seeks = 0, a_seek_skips = 0;
 
             while (v_sample < total_frames || a_sample < total_audio_frames) {
                 if (sync_.stop_requested) {
@@ -415,18 +463,28 @@ void DemuxStage::run()
                         v_sample++;
                         continue;
                     }
-                    if (fseek(f, (long)v_offset, SEEK_SET) != 0 ||
-                        fread(read_buf, 1, v_bytes, f) != v_bytes) {
+                    int64_t t0 = esp_timer_get_time();
+                    if (f_pos != (int64_t)v_offset) {
+                        v_seeks++;
+                        lseek(v_fd, (off_t)v_offset, SEEK_SET);
+                    } else {
+                        v_seek_skips++;
+                    }
+                    if (read(v_fd, read_buf, v_bytes) != (ssize_t)v_bytes) {
                         ESP_LOGE(TAG, "Failed to read video frame %d", v_sample);
                         break;
                     }
+                    f_pos = (int64_t)v_offset + v_bytes;
+                    total_v_read_us += esp_timer_get_time() - t0;
                     int nal_size = build_annex_b_nal(nal_buf, kReadBufSize, read_buf, v_bytes);
                     if (nal_size <= 0) {
                         v_sample++;
                         continue;
                     }
+                    t0 = esp_timer_get_time();
                     if (audio_prio) {
                         if (!send_video_frame(nal_buf, nal_size, v_pts)) {
+                            total_v_send_us += esp_timer_get_time() - t0;
                             v_sample++;
                             v_skipped++;
                             continue;
@@ -437,32 +495,57 @@ void DemuxStage::run()
                             break;
                         }
                     }
+                    total_v_send_us += esp_timer_get_time() - t0;
+                    v_sent++;
                     v_sample++;
                 } else {
                     if (a_bytes == 0 || a_bytes > kReadBufSize) {
                         a_sample++;
                         continue;
                     }
-                    if (fseek(af, (long)a_offset, SEEK_SET) != 0 ||
-                        fread(read_buf, 1, a_bytes, af) != a_bytes) {
+                    int64_t t0 = esp_timer_get_time();
+                    if (af_pos != (int64_t)a_offset) {
+                        a_seeks++;
+                        lseek(a_fd, (off_t)a_offset, SEEK_SET);
+                    } else {
+                        a_seek_skips++;
+                    }
+                    if (read(a_fd, read_buf, a_bytes) != (ssize_t)a_bytes) {
                         ESP_LOGE(TAG, "Failed to read audio frame %d", a_sample);
                         break;
                     }
+                    af_pos = (int64_t)a_offset + a_bytes;
+                    total_a_read_us += esp_timer_get_time() - t0;
+                    t0 = esp_timer_get_time();
                     if (!send_audio(read_buf, a_bytes, a_pts)) {
+                        total_a_send_us += esp_timer_get_time() - t0;
+                        a_dropped++;
                         a_sample++;
                         continue;
                     }
+                    total_a_send_us += esp_timer_get_time() - t0;
+                    a_sent++;
                     a_sample++;
                 }
             }
             if (v_skipped > 0) {
                 ESP_LOGI(TAG, "Demux video frames skipped: %u / %u", v_skipped, total_frames);
             }
-            if (af != f) fclose(af);
+            ESP_LOGI(TAG, "Demux timing: v_read=%lldms a_read=%lldms v_send=%lldms a_send=%lldms",
+                     total_v_read_us / 1000, total_a_read_us / 1000,
+                     total_v_send_us / 1000, total_a_send_us / 1000);
+            ESP_LOGI(TAG, "Demux counts: v_sent=%u v_skip=%u a_sent=%u a_drop=%u",
+                     v_sent, v_skipped, a_sent, a_dropped);
+            ESP_LOGI(TAG, "Demux seeks: v_seek=%u v_skip=%u a_seek=%u a_skip=%u",
+                     v_seeks, v_seek_skips, a_seeks, a_seek_skips);
+            if (separate_a_fd) {
+                close(a_fd);
+            }
         } else
 #endif
         {
             // Video-only: always blocking (no real-time constraint)
+            int64_t f_pos = -1;  // track file position to skip redundant fseeks
             for (unsigned sample = 0; sample < total_frames; sample++) {
                 if (sync_.stop_requested) {
                     ESP_LOGI(TAG, "Stop requested, ending demux early");
@@ -479,14 +562,18 @@ void DemuxStage::run()
 
                 if (frame_bytes == 0 || frame_bytes > kReadBufSize) {
                     ESP_LOGW(TAG, "Frame %d: invalid size %d, skipping", sample, frame_bytes);
+                    f_pos = -1;  // position unknown after skip
                     continue;
                 }
 
-                if (fseek(f, (long)offset, SEEK_SET) != 0 ||
-                    fread(read_buf, 1, frame_bytes, f) != frame_bytes) {
+                if (f_pos != (int64_t)offset) {
+                    lseek(v_fd, (off_t)offset, SEEK_SET);
+                }
+                if (read(v_fd, read_buf, frame_bytes) != (ssize_t)frame_bytes) {
                     ESP_LOGE(TAG, "Failed to read frame %d", sample);
                     break;
                 }
+                f_pos = (int64_t)offset + frame_bytes;
 
                 int nal_size = build_annex_b_nal(nal_buf, kReadBufSize, read_buf, frame_bytes);
                 if (nal_size <= 0) {
@@ -504,10 +591,10 @@ void DemuxStage::run()
         int64_t demux_wall_elapsed = esp_timer_get_time() - demux_wall_start;
         ESP_LOGI(TAG, "Demux finished: %lld ms wall time", demux_wall_elapsed / 1000);
 
+        close(v_fd);
         psram_free(read_buf);
         psram_free(nal_buf);
         MP4D_close(&mp4);
-        fclose(f);
     }
 
     send_eos();

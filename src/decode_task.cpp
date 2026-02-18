@@ -193,15 +193,16 @@ void DecodeStage::run()
             psram_free(msg.data);
 
             // PTS timing (skip if stopping)
-            if (!sync_.stop_requested && !msg.is_sps_pps && msg.pts_us > 0) {
+            // audio_priority: no delay — I2S clock is the real-time reference,
+            // decode should run at max speed, paced by queue backpressure.
+            if (!sync_.stop_requested && !sync_.audio_priority &&
+                !msg.is_sps_pps && msg.pts_us > 0) {
                 int64_t elapsed_us = esp_timer_get_time() - start_time;
                 int64_t delay_us = msg.pts_us - elapsed_us;
                 if (delay_us > 1000) {
                     vTaskDelay(pdMS_TO_TICKS(delay_us / 1000));
-                } else if (!sync_.audio_priority) {
-                    vTaskDelay(1);  // full_video: yield CPU when behind
                 } else {
-                    taskYIELD();    // audio_priority: yield without delay
+                    vTaskDelay(1);  // full_video: yield CPU when behind
                 }
             }
         }
