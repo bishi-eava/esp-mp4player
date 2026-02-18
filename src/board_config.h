@@ -24,7 +24,7 @@
 #define BOARD_LCD_OFFSET_X     0
 #define BOARD_LCD_OFFSET_Y     0
 #define BOARD_LCD_INVERT       true
-#define BOARD_LCD_SPI_FREQ     40000000
+#define BOARD_LCD_SPI_FREQ     80000000
 
 // SD Card: SDMMC 1-bit mode
 #define BOARD_SD_MODE_SDMMC

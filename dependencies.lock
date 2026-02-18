@@ -34,13 +34,13 @@ dependencies:
       type: idf
     version: 5.5.0
   lovyanGFX:
-    component_hash: 4b16f8e694fa4868f1312a4d593f5e4eab57e0693b050e1d08220ae8dad16520
+    component_hash: a0232a02cf92c986c807ad1827a804b8670cbc4a77d172a842fedead56ed50f0
     dependencies: []
     source:
       git: https://github.com/lovyan03/LovyanGFX.git
       path: .
       type: git
-    version: 6f6e9a052fc719ecb2b42640b0207215050d2560
+    version: 42998359d8a2eaf188643da7813122c6c3efd2fd
 direct_dependencies:
 - espressif/esp_audio_codec
 - espressif/esp_h264
