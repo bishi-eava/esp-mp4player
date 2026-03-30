@@ -15,7 +15,11 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#ifdef BOARD_STORAGE_LITTLEFS
+#include "esp_littlefs.h"
+#else
 #include "esp_vfs_fat.h"
+#endif
 
 #include "player_constants.h"
 #include "html_content.h"
@@ -695,7 +699,8 @@ esp_err_t FileServer::start_page_handler(httpd_req_t *req)
 
     if (strcmp(page, "player") == 0 || strcmp(page, "browse") == 0) {
         strlcpy(self->config_.start_page, page, sizeof(self->config_.start_page));
-        save_server_config("/sdcard/server.config", self->config_);
+        std::string cfg_path = std::string(mp4::kSdMountPoint) + "/server.config";
+        save_server_config(cfg_path.c_str(), self->config_);
     }
 
     httpd_resp_set_type(req, "application/json");
@@ -1045,18 +1050,31 @@ esp_err_t FileServer::mkdir_handler(httpd_req_t *req)
 
 esp_err_t FileServer::storage_handler(httpd_req_t *req)
 {
+    uint64_t total = 0;
+    uint64_t used = 0;
+    uint64_t free_bytes = 0;
+
+#ifdef BOARD_STORAGE_LITTLEFS
+    size_t lfs_total = 0, lfs_used = 0;
+    if (esp_littlefs_info("storage", &lfs_total, &lfs_used) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to get storage info");
+        return ESP_FAIL;
+    }
+    total = lfs_total;
+    used = lfs_used;
+    free_bytes = lfs_total - lfs_used;
+#else
     FATFS *fs;
     DWORD fre_clust;
     FRESULT res = f_getfree("0:", &fre_clust, &fs);
-
     if (res != FR_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to get storage info");
         return ESP_FAIL;
     }
-
-    uint64_t total = (uint64_t)(fs->n_fatent - 2) * fs->csize * 512;
-    uint64_t free_bytes = (uint64_t)fre_clust * fs->csize * 512;
-    uint64_t used = total - free_bytes;
+    total = (uint64_t)(fs->n_fatent - 2) * fs->csize * 512;
+    free_bytes = (uint64_t)fre_clust * fs->csize * 512;
+    used = total - free_bytes;
+#endif
 
     char buf[128];
     snprintf(buf, sizeof(buf),

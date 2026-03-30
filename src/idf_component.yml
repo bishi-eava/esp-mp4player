@@ -7,5 +7,7 @@ dependencies:
     version: "^2.4.0"
   espressif/qrcode:
     version: "*"
+  joltwallet/littlefs:
+    version: "^1.20.0"
   lovyanGFX:
     git: https://github.com/lovyan03/LovyanGFX.git

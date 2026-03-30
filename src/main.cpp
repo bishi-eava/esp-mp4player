@@ -1,7 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_vfs_fat.h"
 #include "board_config.h"
 #include "lcd_config.h"
 #include "mp4_player.h"
@@ -10,22 +9,49 @@
 #include "qr_display.h"
 #include "player_constants.h"
 
+#ifdef BOARD_STORAGE_LITTLEFS
+#include "esp_littlefs.h"
+#else
+#include "esp_vfs_fat.h"
 #ifdef BOARD_SD_MODE_SDMMC
 #include "driver/sdmmc_host.h"
 #include "sdmmc_cmd.h"
 #endif
-
 #ifdef BOARD_SD_MODE_SPI
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
 #include "sdmmc_cmd.h"
+#endif
 #endif
 
 static const char *TAG = "main";
 
 static LGFX display;
 
-static bool init_sdcard(void)
+#ifdef BOARD_STORAGE_LITTLEFS
+static bool init_storage(void)
+{
+    ESP_LOGI(TAG, "Initializing LittleFS on internal Flash");
+
+    esp_vfs_littlefs_conf_t conf = {};
+    conf.base_path = mp4::kSdMountPoint;
+    conf.partition_label = "storage";
+    conf.format_if_mount_failed = true;
+    conf.dont_mount = false;
+
+    esp_err_t ret = esp_vfs_littlefs_register(&conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LittleFS mount failed: %s", esp_err_to_name(ret));
+        return false;
+    }
+
+    size_t total = 0, used = 0;
+    esp_littlefs_info("storage", &total, &used);
+    ESP_LOGI(TAG, "LittleFS mounted: total=%u, used=%u", (unsigned)total, (unsigned)used);
+    return true;
+}
+#else
+static bool init_storage(void)
 {
 #ifdef BOARD_SD_MODE_SDMMC
     ESP_LOGI(TAG, "Initializing SD card (SDMMC 1-bit mode)");
@@ -50,7 +76,7 @@ static bool init_sdcard(void)
     };
 
     sdmmc_card_t *card;
-    esp_err_t ret = esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot_config, &mount_config, &card);
+    esp_err_t ret = esp_vfs_fat_sdmmc_mount(mp4::kSdMountPoint, &host, &slot_config, &mount_config, &card);
 #endif
 
 #ifdef BOARD_SD_MODE_SPI
@@ -81,7 +107,7 @@ static bool init_sdcard(void)
     mount_config.allocation_unit_size = mp4::kSdAllocUnitSize;
 
     sdmmc_card_t *card;
-    ret = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot_config, &mount_config, &card);
+    ret = esp_vfs_fat_sdspi_mount(mp4::kSdMountPoint, &host, &slot_config, &mount_config, &card);
 #endif
 
     if (ret != ESP_OK) {
@@ -93,6 +119,7 @@ static bool init_sdcard(void)
     sdmmc_card_print_info(stdout, card);
     return true;
 }
+#endif
 
 static void init_display(void)
 {
@@ -111,24 +138,34 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "ESP32-S3 MP4 Movie Player starting...");
 
-    bool sd_ok = init_sdcard();
+    bool storage_ok = init_storage();
 
     init_display();
     display.setTextColor(TFT_WHITE, TFT_BLACK);
     display.setTextSize(1);
     display.setCursor(10, 10);
     display.println("MP4 Player");
-    display.printf("SD: %s\n", sd_ok ? "OK" : "FAILED");
+#ifdef BOARD_STORAGE_LITTLEFS
+    display.printf("Flash: %s\n", storage_ok ? "OK" : "FAILED");
+#else
+    display.printf("SD: %s\n", storage_ok ? "OK" : "FAILED");
+#endif
 
-    if (!sd_ok) {
+    if (!storage_ok) {
         display.setTextColor(TFT_RED, TFT_BLACK);
+#ifdef BOARD_STORAGE_LITTLEFS
+        display.println("Flash mount failed");
+#else
         display.println("Insert SD & reboot");
+#endif
         return;
     }
 
-    // Load configs from SD card (defaults if files missing)
-    auto server_config = mp4::load_server_config("/sdcard/server.config");
-    auto player_config = mp4::load_player_config("/sdcard/playlist/player.config");
+    // Load configs from storage (defaults if files missing)
+    std::string server_cfg_path = std::string(mp4::kSdMountPoint) + "/server.config";
+    std::string player_cfg_path = std::string(mp4::kSdMountPoint) + mp4::kPlaylistFolder + "/player.config";
+    auto server_config = mp4::load_server_config(server_cfg_path.c_str());
+    auto player_config = mp4::load_player_config(player_cfg_path.c_str());
 
     // MediaController manages playlist and playback lifecycle
     static mp4::MediaController controller(display, player_config);

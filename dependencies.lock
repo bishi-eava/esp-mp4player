@@ -33,6 +33,16 @@ dependencies:
     source:
       type: idf
     version: 5.5.0
+  joltwallet/littlefs:
+    component_hash: dcea25bcef2de023f089f5f01e8d8c46ad1b8ffef75861ad5ffb4098555839df
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.20.4
   lovyanGFX:
     component_hash: a0232a02cf92c986c807ad1827a804b8670cbc4a77d172a842fedead56ed50f0
     dependencies: []
@@ -46,7 +56,8 @@ direct_dependencies:
 - espressif/esp_h264
 - espressif/qrcode
 - idf
+- joltwallet/littlefs
 - lovyanGFX
-manifest_hash: e677c0c48cb233ad3a128c33df9c5a99f823329ab65694bb2262805c586c47f5
+manifest_hash: a5fc67ed73682636950ff6151cb94a437ec366051d25484d086cf7e70bb67805
 target: esp32s3
 version: 2.0.0

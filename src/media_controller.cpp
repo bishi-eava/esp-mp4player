@@ -92,7 +92,8 @@ void MediaController::save_config()
             current_folder_.c_str(),
             sizeof(player_config_.folder));
     player_config_.repeat = repeat_;
-    save_player_config("/sdcard/playlist/player.config", player_config_);
+    std::string cfg_path = std::string(kSdMountPoint) + kPlaylistFolder + "/player.config";
+    save_player_config(cfg_path.c_str(), player_config_);
 }
 
 void MediaController::scan_mp4_files(const char *dirpath)
