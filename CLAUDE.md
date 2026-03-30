@@ -30,6 +30,14 @@
   - **注意:** SPK Baseのラベルは ESP32 (Atom Lite) のGPIO番号で印刷されている。ESP32-S3では異なるGPIOにマッピングされる
 - **パーティション:** 3MB app (esp_audio_codecライブラリにより1MB超)
 
+### LittleFS 内部Flash ストレージ (SDカード不要)
+- **ビルドフラグ**: `BOARD_STORAGE_LITTLEFS` で SD/Flash 切替（`*_flash` 環境で自動設定）
+- **ファイルシステム**: LittleFS (`joltwallet/littlefs` コンポーネント)
+- **マウントポイント**: `/sdcard` を維持（コード互換性のため）
+- **ストレージ容量**: 8MB Flash → ~5.9MB、16MB Flash → ~13.9MB
+- **動画の書き込み**: WiFi AP に接続 → ブラウザから `/browse` でアップロード
+- **初回起動**: LittleFS 自動フォーマット → `/playlist/` フォルダ作成 → MP4 アップロード
+
 ## Architecture (C++ クラスベース + FreeRTOS タスク)
 
 全コードは `namespace mp4` に配置。各タスクは Stage クラスとして実装（`static task_func()` → `run()` トランポリンパターン）。
@@ -148,20 +156,26 @@ Atom S3R では Display(SPI3_HOST) → SD(SPI2_HOST) の順で初期化すると
 - `src/display_task.cpp` — DisplayStage クラス実装（pushImage DMA転送）
 - `src/audio_player.cpp` — AudioPipeline クラス実装（AAC decode + ボリュームスケーリング + I2S output、BOARD_HAS_AUDIO時のみ）
 - `src/yuv2rgb.h` — namespace mp4: BT.601 YUV→RGB565変換（`yuv_to_rgb565()` 単一コア + scaled/unscaled API）
-- `platformio.ini` — マルチ環境設定（spotpear/atoms3r/atoms3r_spk、全環境3MB app partition）
-- `partitions_8MB.csv` — カスタムパーティション（3MB app + 残りdata）
+- `platformio.ini` — マルチ環境設定（SD: spotpear/atoms3r/atoms3r_spk、Flash: *_flash variants）
+- `partitions_8MB.csv` — SDカード用パーティション（3MB app + 残りdata）
+- `partitions_8MB_littlefs.csv` — 8MB Flash LittleFS用（2MB app + ~5.9MB storage）
+- `partitions_16MB_littlefs.csv` — 16MB Flash LittleFS用（2MB app + ~13.9MB storage）
 - `sdkconfig.defaults.spotpear` — SpotPear用sdkconfig（Octal PSRAM, 16MB Flash, WiFi最適化）
 - `sdkconfig.defaults.atoms3r` — Atom S3R用sdkconfig（Octal PSRAM, 8MB Flash, WiFi最適化）
 - `sdkconfig.defaults.atoms3r_spk` — Atom S3R + SPK Base用sdkconfig（WiFi最適化）
 
 ## Build
 ```bash
+# --- SDカード版 ---
 pio run -e spotpear              # SpotPearビルド
 pio run -e atoms3r               # Atom S3Rビルド
 pio run -e atoms3r_spk           # Atom S3R + SPK Baseビルド
-pio run -e spotpear -t upload    # SpotPearへアップロード
-pio run -e atoms3r -t upload     # Atom S3Rへアップロード
-pio run -e atoms3r_spk -t upload # Atom S3R + SPK Baseへアップロード
+# --- 内部Flash版 (LittleFS, SDカード不要) ---
+pio run -e spotpear_flash        # SpotPear Flash版
+pio run -e atoms3r_flash         # Atom S3R Flash版
+pio run -e atoms3r_spk_flash     # Atom S3R + SPK Base Flash版
+# --- アップロード ---
+pio run -e <env> -t upload       # 書き込み
 pio device monitor               # シリアルモニタ (115200bps)
 ```
 
@@ -170,6 +184,7 @@ pio device monitor               # シリアルモニタ (115200bps)
 rm -f sdkconfig.spotpear && rm -rf .pio/build/spotpear && pio run -e spotpear
 rm -f sdkconfig.atoms3r && rm -rf .pio/build/atoms3r && pio run -e atoms3r
 rm -f sdkconfig.atoms3r_spk && rm -rf .pio/build/atoms3r_spk && pio run -e atoms3r_spk
+rm -f sdkconfig.atoms3r_spk_flash && rm -rf .pio/build/atoms3r_spk_flash && pio run -e atoms3r_spk_flash
 ```
 **重要:** `sdkconfig.defaults.*` を変更した場合、生成された `sdkconfig.<env>` を削除しないと反映されない
 

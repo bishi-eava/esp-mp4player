@@ -1,6 +1,6 @@
 # ESP32-S3 MP4 Movie Player
 
-ESP32-S3搭載の小型LCDボードで、SDカード上のMP4動画（H.264 Baseline Profile）を再生するプレーヤーです。WiFi AP内蔵で、スマホのブラウザから再生操作やファイル管理が可能です。
+ESP32-S3搭載の小型LCDボードで、MP4動画（H.264 Baseline Profile）を再生するプレーヤーです。SDカードまたは内部Flash（LittleFS）に保存した動画を再生できます。WiFi AP内蔵で、スマホのブラウザから再生操作やファイル管理が可能です。
 
 > **PSRAM必須:** H.264デコードバッファにPSRAMを使用するため、PSRAM搭載のESP32-S3ボードが必要です。
 
@@ -12,7 +12,8 @@ https://youtube.com/shorts/kdLJf5c8VBU
 
 ## 主な機能
 
-- SDカード上のMP4動画（H.264 Baseline + AAC）を再生
+- MP4動画（H.264 Baseline + AAC）を再生
+- **2つのストレージモード** — SDカード版と内部Flash版（LittleFS、SDカード不要）
 - WiFi AP内蔵 — スマホのブラウザから再生操作・ファイル管理
 - プレイリスト管理 — `/playlist` フォルダ内のMP4を順次再生、サブフォルダ対応
 - 音量調整 — Web UIスライダーでリアルタイム変更（SPK Base構成）
@@ -21,7 +22,7 @@ https://youtube.com/shorts/kdLJf5c8VBU
 - ファイルブラウザ — アップロード・ダウンロード・削除・リネーム・フォルダ作成
 - QRコード表示 — アイドル時にWiFi接続QRをLCDに表示
 - 設定ファイル — `server.config`（WiFi AP設定）と `player.config`（再生設定）でカスタマイズ可能
-- 設定自動保存 — 音量・同期モード・デフォルトフォルダの変更がSDカードに自動保存
+- 設定自動保存 — 音量・同期モード・デフォルトフォルダの変更が自動保存
 
 ## 対応ボード
 
@@ -96,11 +97,11 @@ https://youtube.com/shorts/kdLJf5c8VBU
 
 ## 設定ファイル
 
-SDカード上のテキストファイルで設定をカスタマイズできます。`key=value` 形式で、`#` 始まりの行はコメント、空行は無視されます。ファイルがない場合はデフォルト値で動作します。
+ストレージ上のテキストファイルで設定をカスタマイズできます。`key=value` 形式で、`#` 始まりの行はコメント、空行は無視されます。ファイルがない場合はデフォルト値で動作します。
 
 ### server.config（WiFi AP設定）
 
-SDカードのルートに `/sdcard/server.config` を配置します。
+ストレージのルートに `server.config` を配置します（SDカード版: `/sdcard/server.config`）。
 
 ```ini
 # WiFi AP SSID (default: esp-mp4player)
@@ -125,7 +126,7 @@ start_page=player
 
 ### player.config（再生設定）
 
-`/sdcard/playlist/player.config` に配置します。Web UIで変更すると自動保存されます。
+`playlist/player.config` に配置します。Web UIで変更すると自動保存されます。
 
 ```ini
 # Volume (0-100, default: 100)
@@ -148,7 +149,7 @@ repeat=off
 | `folder` | (空) | デフォルト再生フォルダ名（playlistサブフォルダ） |
 | `repeat` | `off` | リピート再生（`on`: 最後まで再生後に先頭から繰り返し） |
 
-- **音量**・**同期モード**・**リピート**はWeb UIで変更すると即座にSDカードへ保存されます
+- **音量**・**同期モード**・**リピート**はWeb UIで変更すると即座にストレージへ保存されます
 - **デフォルトフォルダ**はプレイヤーページの ★ ボタンで登録します
 - `start_page=player` の場合、起動時に `folder` で指定されたフォルダから自動再生します
 
@@ -157,8 +158,8 @@ repeat=off
 C++ クラスベース + FreeRTOS タスク構成。全コードは `namespace mp4` に配置されています。
 
 ```
-映像: SDカード → DemuxStage (minimp4) → AVCC→Annex B変換 → DecodeStage (esp-h264 + YUV→RGB565) → DisplayStage (LovyanGFX DMA)
-音声: SDカード → DemuxStage (minimp4) → AudioPipeline (esp_audio_codec AAC → Volume → I2S DMA)  ※BOARD_HAS_AUDIO時のみ
+映像: ストレージ → DemuxStage (minimp4) → AVCC→Annex B変換 → DecodeStage (esp-h264 + YUV→RGB565) → DisplayStage (LovyanGFX DMA)
+音声: ストレージ → DemuxStage (minimp4) → AudioPipeline (esp_audio_codec AAC → Volume → I2S DMA)  ※BOARD_HAS_AUDIO時のみ
 ```
 
 ### クラス構成
@@ -186,7 +187,7 @@ C++ クラスベース + FreeRTOS タスク構成。全コードは `namespace m
 
 ```
 app_main (Core 0):
-  1. init_sdcard()          ← SD を先に初期化（SPIバス競合回避）
+  1. init_storage()         ← SD or LittleFS を先に初期化
   2. init_display()         ← Display を後から初期化
   3. FileServer::start()    ← WiFi AP + HTTP server 起動（常時ON）
   4. MediaController        → プレイリスト管理 + 自動再生
@@ -238,6 +239,7 @@ Core 1                                Core 0
 | esp-h264-component v1.2.0 | H.264ソフトウェアデコーダ (SIMD最適化) | Espressif | https://github.com/espressif/esp-h264-component |
 | minimp4 | MP4コンテナパーサー (シングルヘッダ) | CC0 (Public Domain) | https://github.com/lieff/minimp4 |
 | esp_audio_codec v2.4.0+ | AACデコーダ (BOARD_HAS_AUDIO時のみ) | Espressif | https://github.com/espressif/esp-adf-libs |
+| joltwallet/littlefs v1.20+ | LittleFSファイルシステム (Flash版のみ) | MIT | https://components.espressif.com/components/joltwallet/littlefs |
 | espressif/qrcode | QRコード生成 (WiFi接続QR表示) | MIT | https://components.espressif.com/components/espressif/qrcode |
 
 ## 開発環境
@@ -246,6 +248,10 @@ Core 1                                Core 0
 - **ビルドツール:** PlatformIO (espressif32 @ ^6.5.0)
 
 ## ビルド・実行
+
+各ボードに **SDカード版** と **内部Flash版** の2つのビルド環境があります。
+
+### SDカード版（外部SDカードにMP4を保存）
 
 ```bash
 # Atom S3R + SPK Base（音声出力対応）
@@ -259,16 +265,44 @@ pio run -e atoms3r -t upload     # アップロード
 # SpotPear
 pio run -e spotpear              # ビルド
 pio run -e spotpear -t upload    # アップロード
+```
 
+### 内部Flash版（SDカード不要、LittleFSに保存）
+
+SDカードリーダーが不要なため、ハードウェア構成を簡素化できます。
+ストレージ容量は限られますが（8MB Flash: ~5.9MB、16MB Flash: ~13.9MB）、短い動画を数本保存して再生できます。
+
+```bash
+# Atom S3R + SPK Base（Flash版）
+pio run -e atoms3r_spk_flash           # ビルド
+pio run -e atoms3r_spk_flash -t upload # アップロード
+
+# Atom S3R（Flash版）
+pio run -e atoms3r_flash               # ビルド
+pio run -e atoms3r_flash -t upload     # アップロード
+
+# SpotPear（Flash版）
+pio run -e spotpear_flash              # ビルド
+pio run -e spotpear_flash -t upload    # アップロード
+```
+
+内部Flash版の初回セットアップ:
+1. ファームウェアを書き込むと、初回起動時にLittleFSが自動フォーマットされます
+2. WiFi APに接続（SSID: `esp-mp4player`、パスワード: `12345678`）
+3. ブラウザで `http://192.168.4.1/browse` を開く
+4. `playlist` フォルダを作成し、MP4ファイルをアップロード
+
+```bash
 # シリアルモニタ (115200bps)
 pio device monitor
 ```
 
 ## 動画の準備
 
-SDカードの `playlist` フォルダにMP4ファイルを配置してください。サブフォルダにも対応しています。
+`playlist` フォルダにMP4ファイルを配置してください。サブフォルダにも対応しています。
 
-WiFi接続後、ブラウザのファイルブラウザページからアップロードすることもできます（再生停止中のみ）。
+- **SDカード版:** SDカードの `playlist` フォルダに直接コピー、またはブラウザからアップロード
+- **内部Flash版:** ブラウザのファイルブラウザページからアップロード（再生停止中のみ）
 
 H.264 Baseline Profile が**必須**です（ソフトウェアデコーダの制限）。
 
