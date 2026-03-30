@@ -12,6 +12,11 @@
 #include "esp_aac_dec.h"
 #include "mp4_player.h"
 
+#ifdef BOARD_AUDIO_CODEC_ES8311
+#include "driver/i2c_master.h"
+#include "driver/gpio.h"
+#endif
+
 static const char *TAG = "audio";
 
 namespace mp4 {
@@ -24,6 +29,182 @@ void AudioPipeline::task_func(void *arg)
     delete self;
     vTaskDelete(nullptr);
 }
+
+#ifdef BOARD_AUDIO_CODEC_ES8311
+
+static i2c_master_bus_handle_t codec_i2c_bus_ = nullptr;
+static i2c_master_dev_handle_t codec_i2c_dev_ = nullptr;
+
+static esp_err_t es8311_write_reg(uint8_t reg, uint8_t val)
+{
+    uint8_t buf[2] = {reg, val};
+    return i2c_master_transmit(codec_i2c_dev_, buf, sizeof(buf), pdMS_TO_TICKS(100));
+}
+
+static esp_err_t es8311_read_reg(uint8_t reg, uint8_t *val)
+{
+    return i2c_master_transmit_receive(codec_i2c_dev_, &reg, 1, val, 1, pdMS_TO_TICKS(100));
+}
+
+// Clock coefficient table from official Espressif ES8311 driver
+// MCLK derived from BCLK: mclk = sample_rate * bits * 2
+struct es8311_coeff {
+    uint32_t mclk;
+    uint32_t rate;
+    uint8_t pre_div;
+    uint8_t pre_multi;
+    uint8_t adc_div;
+    uint8_t dac_div;
+    uint8_t fs_mode;
+    uint8_t lrck_h;
+    uint8_t lrck_l;
+    uint8_t bclk_div;
+    uint8_t adc_osr;
+    uint8_t dac_osr;
+};
+
+static const es8311_coeff kCoeffDiv[] = {
+    // mclk       rate   pre_div pre_multi adc_div dac_div fs lrck_h lrck_l bclk adc_osr dac_osr
+    {1411200,  44100, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {2822400,  44100, 0x01, 0x02, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {1536000,  48000, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {3072000,  48000, 0x01, 0x02, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {1024000,  32000, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {2048000,  32000, 0x01, 0x02, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {1024000,  16000, 0x01, 0x02, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {512000,    8000, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {768000,   24000, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+    {705600,   22050, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0xff, 0x04, 0x10, 0x10},
+};
+
+static const es8311_coeff *find_coeff(uint32_t mclk, uint32_t rate)
+{
+    for (size_t i = 0; i < sizeof(kCoeffDiv) / sizeof(kCoeffDiv[0]); i++) {
+        if (kCoeffDiv[i].mclk == mclk && kCoeffDiv[i].rate == rate) return &kCoeffDiv[i];
+    }
+    return nullptr;
+}
+
+static bool init_audio_codec(unsigned sample_rate)
+{
+    ESP_LOGI(TAG, "Initializing ES8311 audio codec via I2C");
+
+    // Init I2C master bus (new driver API, compatible with LovyanGFX)
+    i2c_master_bus_config_t bus_cfg = {};
+    bus_cfg.i2c_port = BOARD_CODEC_I2C_PORT;
+    bus_cfg.sda_io_num = BOARD_CODEC_I2C_SDA;
+    bus_cfg.scl_io_num = BOARD_CODEC_I2C_SCL;
+    bus_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_cfg.glitch_ignore_cnt = 7;
+    bus_cfg.flags.enable_internal_pullup = true;
+
+    esp_err_t ret = i2c_new_master_bus(&bus_cfg, &codec_i2c_bus_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(ret));
+        return false;
+    }
+
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address = BOARD_CODEC_I2C_ADDR;
+    dev_cfg.scl_speed_hz = BOARD_CODEC_I2C_FREQ;
+
+    ret = i2c_master_bus_add_device(codec_i2c_bus_, &dev_cfg, &codec_i2c_dev_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C add device failed: %s", esp_err_to_name(ret));
+        i2c_del_master_bus(codec_i2c_bus_);
+        codec_i2c_bus_ = nullptr;
+        return false;
+    }
+
+    // Following the official Espressif es8311_init() sequence
+    // MCLK from BCLK: mclk = sample_rate * 16bit * 2ch
+    uint32_t mclk = sample_rate * 16 * 2;
+    const es8311_coeff *coeff = find_coeff(mclk, sample_rate);
+    if (!coeff) {
+        ESP_LOGE(TAG, "No ES8311 clock coefficient for %uHz (mclk=%lu)", sample_rate, mclk);
+        return false;
+    }
+
+    // Reset
+    es8311_write_reg(0x00, 0x1F);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    es8311_write_reg(0x00, 0x00);
+    es8311_write_reg(0x00, 0x80);  // Power-on, CSM enabled
+
+    // Clock config: MCLK from SCLK pin (bit7=1), enable all clocks
+    es8311_write_reg(0x01, 0xBF);  // 0x3F | BIT(7) = MCLK from BCLK
+
+    // Clock dividers (from coeff table)
+    uint8_t reg02 = ((coeff->pre_div - 1) << 5) | (coeff->pre_multi << 3);
+    es8311_write_reg(0x02, reg02);
+    es8311_write_reg(0x03, (coeff->fs_mode << 6) | coeff->adc_osr);
+    es8311_write_reg(0x04, coeff->dac_osr);
+    es8311_write_reg(0x05, ((coeff->adc_div - 1) << 4) | (coeff->dac_div - 1));
+
+    // BCLK divider
+    uint8_t reg06 = (coeff->bclk_div < 19) ? (coeff->bclk_div - 1) : coeff->bclk_div;
+    es8311_write_reg(0x06, reg06);
+
+    // LRCK divider
+    es8311_write_reg(0x07, coeff->lrck_h);
+    es8311_write_reg(0x08, coeff->lrck_l);
+
+    // SDP format: slave mode, I2S 16-bit
+    uint8_t reg00;
+    es8311_read_reg(0x00, &reg00);
+    reg00 &= 0xBF;  // Slave mode (clear bit6)
+    es8311_write_reg(0x00, reg00);
+    es8311_write_reg(0x09, 0x0C);  // SDP In:  16-bit I2S (bits[3:2]=11 for 16bit)
+    es8311_write_reg(0x0A, 0x0C);  // SDP Out: 16-bit I2S
+
+    // Power up
+    es8311_write_reg(0x0D, 0x01);  // Power up analog circuitry
+    es8311_write_reg(0x0E, 0x02);  // Enable analog PGA, ADC modulator
+    es8311_write_reg(0x12, 0x00);  // Power up DAC
+    es8311_write_reg(0x13, 0x10);  // Enable output to HP drive
+    es8311_write_reg(0x1C, 0x6A);  // ADC EQ bypass, cancel DC offset
+    es8311_write_reg(0x37, 0x08);  // Bypass DAC equalizer
+
+    // DAC hardware volume: attenuate before amplifier to prevent clipping
+    es8311_write_reg(0x32, BOARD_CODEC_DAC_VOLUME);
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    ESP_LOGI(TAG, "ES8311 codec initialized: %uHz, mclk=%lu", sample_rate, mclk);
+    return true;
+}
+
+static void enable_amplifier(void)
+{
+    gpio_config_t io_conf = {};
+    io_conf.pin_bit_mask = (1ULL << BOARD_AMP_EN_PIN);
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    gpio_config(&io_conf);
+    gpio_set_level(BOARD_AMP_EN_PIN, 1);
+    ESP_LOGI(TAG, "NS4150B amplifier enabled (GPIO %d)", BOARD_AMP_EN_PIN);
+}
+
+static void disable_amplifier(void)
+{
+    gpio_set_level(BOARD_AMP_EN_PIN, 0);
+}
+
+static void deinit_audio_codec(void)
+{
+    disable_amplifier();
+    es8311_write_reg(0x13, 0x00);  // Power down DAC
+    if (codec_i2c_dev_) {
+        i2c_master_bus_rm_device(codec_i2c_dev_);
+        codec_i2c_dev_ = nullptr;
+    }
+    if (codec_i2c_bus_) {
+        i2c_del_master_bus(codec_i2c_bus_);
+        codec_i2c_bus_ = nullptr;
+    }
+}
+
+#endif // BOARD_AUDIO_CODEC_ES8311
 
 bool AudioPipeline::init_i2s(unsigned sample_rate, unsigned channels)
 {
@@ -116,10 +297,24 @@ void AudioPipeline::run()
     ESP_LOGI(TAG, "audio_task started: %u Hz, %u ch",
              audio_info_.sample_rate, audio_info_.channels);
 
-    if (!init_i2s(audio_info_.sample_rate, audio_info_.channels)) {
-        ESP_LOGE(TAG, "I2S init failed, draining audio queue");
+#ifdef BOARD_AUDIO_CODEC_ES8311
+    if (!init_audio_codec(audio_info_.sample_rate)) {
+        ESP_LOGE(TAG, "ES8311 codec init failed, draining audio queue");
         goto cleanup;
     }
+#endif
+
+    if (!init_i2s(audio_info_.sample_rate, audio_info_.channels)) {
+        ESP_LOGE(TAG, "I2S init failed, draining audio queue");
+#ifdef BOARD_AUDIO_CODEC_ES8311
+        deinit_audio_codec();
+#endif
+        goto cleanup;
+    }
+
+#ifdef BOARD_AUDIO_CODEC_ES8311
+    enable_amplifier();
+#endif
 
     {
         esp_audio_dec_register_default();
@@ -229,6 +424,9 @@ void AudioPipeline::run()
     }
 
     deinit_i2s();
+#ifdef BOARD_AUDIO_CODEC_ES8311
+    deinit_audio_codec();
+#endif
 
 cleanup:
     drain_queue();

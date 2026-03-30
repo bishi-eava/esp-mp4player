@@ -112,8 +112,57 @@
 #define BOARD_I2S_LRCLK        GPIO_NUM_39
 #define BOARD_I2S_DOUT         GPIO_NUM_38
 
+#elif defined(BOARD_ATOMS3R_ECHO)
+// ============================================================
+// M5Stack Atom S3R + Echo Base (GC9107 128x128, ES8311 + NS4150B)
+// No SD card — LittleFS Flash storage only
+// ============================================================
+
+// Display (identical to ATOMS3R)
+#define BOARD_DISPLAY_WIDTH    128
+#define BOARD_DISPLAY_HEIGHT   128
+#define BOARD_DISPLAY_ROTATION 0
+#define BOARD_LCD_SPI_HOST     SPI3_HOST
+#define BOARD_LCD_SCK          15
+#define BOARD_LCD_MOSI         21
+#define BOARD_LCD_DC           42
+#define BOARD_LCD_CS           14
+#define BOARD_LCD_RST          48
+#define BOARD_LCD_BL           16
+#define BOARD_LCD_OFFSET_X     0
+#define BOARD_LCD_OFFSET_Y     32
+#define BOARD_LCD_INVERT       false
+#define BOARD_LCD_SPI_FREQ     40000000
+
+// I2C LED driver for backlight (identical to ATOMS3R)
+#define BOARD_BL_I2C_PORT      I2C_NUM_1
+#define BOARD_BL_I2C_SDA       45
+#define BOARD_BL_I2C_SCL       0
+#define BOARD_BL_I2C_ADDR      0x30
+#define BOARD_BL_I2C_FREQ      400000
+
+// I2S Audio output (ES8311 codec on Echo Base)
+#define BOARD_I2S_BCLK         GPIO_NUM_8
+#define BOARD_I2S_LRCLK        GPIO_NUM_6
+#define BOARD_I2S_DOUT         GPIO_NUM_5
+
+// ES8311 audio codec (I2C control, I2C_NUM_0 — separate from backlight I2C_NUM_1)
+#define BOARD_AUDIO_CODEC_ES8311
+#define BOARD_CODEC_I2C_PORT   I2C_NUM_0
+#define BOARD_CODEC_I2C_SDA    GPIO_NUM_38
+#define BOARD_CODEC_I2C_SCL    GPIO_NUM_39
+#define BOARD_CODEC_I2C_ADDR   0x18
+#define BOARD_CODEC_I2C_FREQ   400000
+
+// NS4150B amplifier enable
+#define BOARD_AMP_EN_PIN       GPIO_NUM_18
+
+// ES8311 DAC hardware volume (0x00–0xFF). Controls signal level before NS4150B amp.
+// Lower value = less clipping. 0xBF ≈ 75% is a good starting point.
+#define BOARD_CODEC_DAC_VOLUME 0xBF
+
 #else
-#error "No board defined! Use -DBOARD_SPOTPEAR, -DBOARD_ATOMS3R, or -DBOARD_ATOMS3R_SPK"
+#error "No board defined! Use -DBOARD_SPOTPEAR, -DBOARD_ATOMS3R, -DBOARD_ATOMS3R_SPK, or -DBOARD_ATOMS3R_ECHO"
 #endif
 
 // Max decode resolution (half of Full HD, common to all boards)
