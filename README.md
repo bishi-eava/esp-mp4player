@@ -40,6 +40,18 @@ https://youtube.com/shorts/kdLJf5c8VBU
 
 > **Note:** この構成は Atom S3R 本体と SPK Base のペアです。SPK BaseにはSDカードスロットとNS4168 I2Sスピーカーが搭載されており、音声付きMP4の再生が可能です。
 
+### M5Stack Atom S3R + Echo Base
+
+| 項目 | 仕様 |
+|---|---|
+| 本体 | [M5Stack Atom S3R](https://docs.m5stack.com/en/core/AtomS3R) |
+| MCU | ESP32-S3-PICO-1-N8R8 (Flash: 8MB, PSRAM: 8MB Octal SPI) |
+| ディスプレイ | GC9107 IPS 128x128 |
+| ストレージ | 内部Flash (LittleFS, ~5.9MB) — SDカードなし |
+| 音声出力 | ES8311 コーデック + NS4150B アンプ (モノラル) via [Echo Base](https://docs.m5stack.com/en/atom/Atomic%20Echo%20Base) |
+
+> **Note:** Echo BaseにはSDカードスロットがないため、内部Flash（LittleFS）に動画を保存します。WiFi経由でブラウザからアップロードしてください。
+
 ### M5Stack Atom S3R + ATOMIC TF Card Reader
 
 | 項目 | 仕様 |
@@ -273,6 +285,10 @@ SDカードリーダーが不要なため、ハードウェア構成を簡素化
 ストレージ容量は限られますが（8MB Flash: ~5.9MB、16MB Flash: ~13.9MB）、短い動画を数本保存して再生できます。
 
 ```bash
+# Atom S3R + Echo Base（音声出力対応、Flash専用）
+pio run -e atoms3r_echo                # ビルド
+pio run -e atoms3r_echo -t upload      # アップロード
+
 # Atom S3R + SPK Base（Flash版）
 pio run -e atoms3r_spk_flash           # ビルド
 pio run -e atoms3r_spk_flash -t upload # アップロード
@@ -320,9 +336,9 @@ ffmpeg -i input.mp4 \
   -pix_fmt yuv420p video.mp4
 ```
 
-### 音声付き（Atom S3R + SPK Base）
+### 音声付き（Atom S3R + SPK Base / Echo Base）
 
-SPK Base 構成では AAC 音声付き MP4 の再生に対応しています。
+SPK Base または Echo Base 構成では AAC 音声付き MP4 の再生に対応しています。
 
 ```bash
 # 320x240 + AAC音声
@@ -359,8 +375,8 @@ ffmpeg -i input.mp4 \
 | プロファイル | Baseline | **必須** (SWデコーダの制限) |
 | キーフレーム間隔 | `-g 15` | **必須** (1秒ごと、フレームスキップ後の映像回復に必要) |
 | ピクセルフォーマット | yuv420p | I420形式 |
-| 音声コーデック | AAC | AAC-LC (SPK Base構成のみ) |
-| 音声チャンネル | モノラル (-ac 1) | NS4168はモノラルスピーカー |
+| 音声コーデック | AAC | AAC-LC (SPK Base / Echo Base構成) |
+| 音声チャンネル | モノラル (-ac 1) | モノラルスピーカー |
 
 ## ピン配置
 
@@ -395,6 +411,34 @@ ffmpeg -i input.mp4 \
 | DATA | 38 |
 
 > **Note:** SPK Base の基板上のラベルは ESP32 (Atom Lite) の GPIO 番号で印刷されています。ESP32-S3 (Atom S3R) では物理的に同じピンでも GPIO 番号が異なるため、上記の値を使用してください。
+
+### M5Stack Atom S3R + Echo Base
+
+#### SPI (ディスプレイ: SPI3_HOST, 3-wire)
+
+Atom S3R + SPK Base と同一です。
+
+#### I2S (ES8311 コーデック, Echo Base)
+
+| 信号 | GPIO |
+|---|---|
+| BCLK | 8 |
+| LRCLK | 6 |
+| DOUT | 5 |
+
+#### I2C (ES8311 コーデック制御, Echo Base)
+
+| 信号 | GPIO |
+|---|---|
+| SDA | 38 |
+| SCL | 39 |
+| アドレス | 0x18 |
+
+#### アンプ (NS4150B, Echo Base)
+
+| 信号 | GPIO |
+|---|---|
+| SPKEN | 18 |
 
 ### M5Stack Atom S3R + ATOMIC TF Card Reader
 

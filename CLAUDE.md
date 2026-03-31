@@ -30,8 +30,21 @@
   - **注意:** SPK Baseのラベルは ESP32 (Atom Lite) のGPIO番号で印刷されている。ESP32-S3では異なるGPIOにマッピングされる
 - **パーティション:** 3MB app (esp_audio_codecライブラリにより1MB超)
 
+### M5Stack Atom S3R + Echo Base (ES8311 + NS4150B Audio)
+- **MCU:** ESP32-S3-PICO-1-N8R8 (board: m5stack-atoms3)
+- **Flash:** 8MB, **PSRAM:** 8MB Octal SPI
+- **Display:** GC9107 128x128 IPS (Atom S3Rと同一設定)
+- **ストレージ:** 内部Flash (LittleFS, ~5.9MB) — SDカードなし
+- **Audio Codec:** ES8311 (I2C: SDA=38, SCL=39, addr=0x18, I2C_NUM_0)
+  - I2S: BCLK=GPIO8, LRCLK=GPIO6, DOUT=GPIO5（SPK Baseとは全て異なるピン）
+  - MCLK不使用: BCLKからクロック取得（reg01 bit7=1）
+  - I2Cは新APIのみ使用 (`driver/i2c_master.h`) — LovyanGFXとの互換性のため
+- **Amplifier:** NS4150B (SPKEN=GPIO18)
+- **DAC Volume:** `BOARD_CODEC_DAC_VOLUME` でハードウェア音量制限（クリッピング防止）
+- **ビルド:** `pio run -e atoms3r_echo` (Flash専用、SDカード版なし)
+
 ### LittleFS 内部Flash ストレージ (SDカード不要)
-- **ビルドフラグ**: `BOARD_STORAGE_LITTLEFS` で SD/Flash 切替（`*_flash` 環境で自動設定）
+- **ビルドフラグ**: `BOARD_STORAGE_LITTLEFS` で SD/Flash 切替（`*_flash`/`atoms3r_echo` 環境で自動設定）
 - **ファイルシステム**: LittleFS (`joltwallet/littlefs` コンポーネント)
 - **マウントポイント**: `/sdcard` を維持（コード互換性のため）
 - **ストレージ容量**: 8MB Flash → ~5.9MB、16MB Flash → ~13.9MB
@@ -156,7 +169,7 @@ Atom S3R では Display(SPI3_HOST) → SD(SPI2_HOST) の順で初期化すると
 - `src/display_task.cpp` — DisplayStage クラス実装（pushImage DMA転送）
 - `src/audio_player.cpp` — AudioPipeline クラス実装（AAC decode + ボリュームスケーリング + I2S output、BOARD_HAS_AUDIO時のみ）
 - `src/yuv2rgb.h` — namespace mp4: BT.601 YUV→RGB565変換（`yuv_to_rgb565()` 単一コア + scaled/unscaled API）
-- `platformio.ini` — マルチ環境設定（SD: spotpear/atoms3r/atoms3r_spk、Flash: *_flash variants）
+- `platformio.ini` — マルチ環境設定（SD: spotpear/atoms3r/atoms3r_spk、Flash: *_flash + atoms3r_echo）
 - `partitions_8MB.csv` — SDカード用パーティション（3MB app + 残りdata）
 - `partitions_8MB_littlefs.csv` — 8MB Flash LittleFS用（2MB app + ~5.9MB storage）
 - `partitions_16MB_littlefs.csv` — 16MB Flash LittleFS用（2MB app + ~13.9MB storage）
@@ -174,6 +187,7 @@ pio run -e atoms3r_spk           # Atom S3R + SPK Baseビルド
 pio run -e spotpear_flash        # SpotPear Flash版
 pio run -e atoms3r_flash         # Atom S3R Flash版
 pio run -e atoms3r_spk_flash     # Atom S3R + SPK Base Flash版
+pio run -e atoms3r_echo          # Atom S3R + Echo Base (Flash専用)
 # --- アップロード ---
 pio run -e <env> -t upload       # 書き込み
 pio device monitor               # シリアルモニタ (115200bps)
